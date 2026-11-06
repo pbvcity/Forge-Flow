@@ -53,14 +53,17 @@ async function detach(args, cwd, id) {
   return 0;
 }
 
+function section(text, heading) {
+  const start = text.indexOf(heading);
+  if (start < 0) return '';
+  const next = text.indexOf('\n## ', start + heading.length);
+  return text.slice(start, next < 0 ? undefined : next).trim();
+}
+
 function playbookRules(root) {
-  const text = read(join(root, 'playbook/default.md'));
-  return ['## When to stop', '## Business decisions'].map(heading => {
-    const start = text.indexOf(heading);
-    if (start < 0) return '';
-    const next = text.indexOf('\n## ', start + heading.length);
-    return text.slice(start, next < 0 ? undefined : next).trim();
-  }).join('\n\n');
+  const playbook = read(join(root, 'playbook/default.md'));
+  const keyPoints = section(read(join(root, 'skills/go/SKILL.md')), '## 5. Key points').replace('../../playbook/packs/', 'the packs folder named below');
+  return [section(playbook, '## When to stop'), section(playbook, '## Business decisions'), keyPoints].join('\n\n');
 }
 
 function taskCard(run, plan, task, evidence) {
@@ -86,7 +89,7 @@ function taskCard(run, plan, task, evidence) {
     '',
     run.rules,
   ];
-  if (evidence) lines.push('', '## Previous attempt failed', evidence, '', 'Fix this. The acceptance above stays as it is.');
+  if (evidence) lines.push('', '## Previous attempt failed', evidence, '', 'Fix this, and rerun only what the fix touches before the acceptance. The acceptance above stays as it is.');
   return lines.join('\n');
 }
 

@@ -56,8 +56,20 @@ For contract and high, you are not finished until this has run. Do it once the c
 node <this skill's directory>/../../cli/ff.mjs review --base <commit you started from> --risk <tier>
 ```
 
-Read each reviewer's output in full, fix what is real, rerun the tests, and say in your report who reviewed and what they found. If the command exits 2 or 3, use a read-only sub-agent with the diff and `../../playbook/review.md`. You may report without a review only after both really failed, and you quote the errors. Skipping it by choice is not allowed.
+Read each reviewer's output in full, fix what is real, rerun only the tests those fixes touch, and say in your report who reviewed and what they found. If the command exits 2 or 3, use a read-only sub-agent with the diff and `../../playbook/review.md`. You may report without a review only after both really failed, and you quote the errors. Skipping it by choice is not allowed.
 
-## 5. Keep going
+## 5. Key points
+
+Know these even if you open nothing else. For more than a small change in one of these subjects, read its pack in `../../playbook/packs/`.
+
+- **Writing code:** Ask first whether it needs to exist, then whether the repository, standard library, platform, or an existing dependency already does it. Never cut validation at trust boundaries, error handling that prevents data loss, security, or accessibility.
+- **Tests and CI** (`ci-and-tests`): Choose checks from the changed files. In a fix round, rerun only the tests the fix touches. Run the full suite once at the end, push once, read the result. Reuse builds and caches. Never skip tests or loosen assertions to get green. A flaky test is a bug. Passing acceptance by a trick is a failure: if the task cannot be done as written, say so and hold it.
+- **Concurrency:** State can change across any `await`. Take the balance, stock, or order state before the wait, and recheck after it. Ask what a cancel or a second caller does in that gap.
+- **UI** (`frontend-visual`): The project's own UI skill and rules come first. Use only its tokens and components. Look at the real render at desktop and phone widths, or write `not seen rendered`. Build every state: empty, loading, error, long text.
+- **Data** (`data-migration`): Back up and confirm it restores. Count the real rows read-only first. Try it on a copy. Expand, migrate, contract. Delete only exact, listed targets.
+- **Money** (`payments`): The server recomputes every amount. Store integer minor units. Verify callbacks and make them idempotent. A refund cannot exceed what remains. When state is unclear, do not charge twice. Run one real small cycle before going live.
+- **Windows** (`windows`): Set UTF-8 explicitly, and read back non-ASCII writes. Use absolute paths. Close stdin for headless tools. Kill whole process trees. `bash` may be the WSL launcher.
+
+## 6. Keep going
 
 Moving from one skill to the next is not a stop. Continue until the work is done or a stop from "When to stop" applies. For a stop, give the user what they need to decide, and finish everything that does not depend on it.

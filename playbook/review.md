@@ -19,6 +19,7 @@ Each finding has a severity, a short family name, a `file:line` read from the so
 
 Then apply these rules:
 
+- Run it when you can. A finding you reproduced outranks one you reasoned out, so say which it is.
 - A BLOCKER or HIGH missing any of the six becomes MEDIUM, tagged `insufficient evidence`. Keep it.
 - Constructed input only: severity caps at MEDIUM, or HIGH on the high tier.
 - Internal tools and reports cap at MEDIUM unless the loss is credentials or data.
@@ -99,7 +100,7 @@ Keep known-accepted items in `REVIEW.md`, and feed them to the next review so th
 - Rate-limit and idempotency keys hold in the real deployment topology.
 - External response fields match official docs.
 - Failure consequences fit the value: one bad item does not void the whole.
-- For executor output, look for weakened or deleted assertions, fixtures edited to pass, out-of-scope changes, hardcoded paths and commits, gates true only in its environment, and unexplained deviation from the spec.
+- For executor output, look for work that passes acceptance by a trick instead of doing the task, weakened or deleted assertions, fixtures edited to pass, out-of-scope changes, hardcoded paths and commits, gates true only in its environment, and unexplained deviation from the spec.
 - Visual work was seen rendered, or the report says it was not.
 - Docs changed with behavior. Follow-ups are written down.
 

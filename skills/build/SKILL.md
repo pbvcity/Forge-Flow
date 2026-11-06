@@ -25,6 +25,7 @@ Use the reuse ladder before writing code: does this need to exist, does the repo
 - A shortcut with a known limit gets a comment: `shortcut: <the limit>, <when to upgrade>`.
 - If you find a bug outside the task, fix it if the fix is small and clear. Otherwise note it.
 - Run the task's `Accept:` commands and tick the task in `PLAN.md` only on real passing output.
+- In a fix round, rerun only the tests the fix touches. Run the full suite once at the end.
 
 ## 3. Dispatch when it helps
 

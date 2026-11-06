@@ -72,7 +72,7 @@ Plan and review files are for work that needs them to survive a session. They ar
 - If you touched startup, registration, or config, start through the real entry point, flag on and off.
 - Ask of each regression test: does it fail without the fix? On contract and high work, watch it fail first. No test beats a bad test.
 - For framework fields and third-party behavior, read the source or docs, not names or memory.
-- Run checks where you changed things, the full suite at the merge point. CI is the last check, not a debugger.
+- Run checks where you changed things. In a fix round, rerun only the tests the fix touches. Run the full suite once, at the merge point. CI is the last check, not a debugger.
 - Do small follow-ups now. Only real external dependencies wait, written where the next person will read them.
 - Merged is not shipped. Close with what you skipped, what you left unchecked, and the remaining risk.
 

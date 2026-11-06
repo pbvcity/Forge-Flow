@@ -33,7 +33,7 @@ The lead is `roles.reviewer` in `~/.ff/config.json`, and `host` or an unset valu
 
 ## 3. Decide
 
-The lead reads the raw findings, applies the caps, and decides each one: block, fix now, defer, or reject with evidence. Other reviewers have no vote, and each of their findings gets a response. Do not rewrite their text. Check each finding against the source before acting.
+When reviewers disagree widely, the requirement is probably unclear: go back to the acceptance criteria instead of averaging or adding rounds. The lead reads the raw findings, applies the caps, and decides each one: block, fix now, defer, or reject with evidence. Other reviewers have no vote, and each of their findings gets a response. Do not rewrite their text. Check each finding against the source before acting.
 
 ## 4. Write REVIEW.md
 
