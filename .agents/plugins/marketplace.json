@@ -1,0 +1,16 @@
+{
+  "name": "forge-flow",
+  "plugins": [
+    {
+      "name": "ff",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

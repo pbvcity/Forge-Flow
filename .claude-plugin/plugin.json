@@ -1,0 +1,9 @@
+{
+  "name": "ff",
+  "version": "2.0.0",
+  "description": "Forge Flow: engineering workflow for coding agents.",
+  "author": {
+    "name": "pbvcity"
+  },
+  "license": "MIT"
+}
