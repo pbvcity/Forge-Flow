@@ -16,7 +16,7 @@ node <this skill's directory>/../../cli/ff.mjs doctor
 If the tool is missing or fails, detect by hand. Read versions and model lists only. Do not open credential files or print secrets.
 
 - Single-model hosts: check for CLIs with `claude --version`, `codex --version`, `grok --version`, and `opencode --version`. Each CLI is usually one model family, and a second family means calling its CLI.
-- Multi-model hosts: read `pi --list-models` and group by vendor. Another family needs only a different `--model` argument, so default the reviewer to a different family from the builder.
+- Multi-model hosts: read `pi --list-models` and `opencode models` and group by vendor. Another family needs only a different `--model` argument, so default the reviewer to a different family from the builder.
 
 Judge family from the model name, and fall back to vendor if unclear. Two tiers from one vendor count as one family, because they share blind spots.
 
@@ -26,7 +26,7 @@ Who leads reviews? The default is the current model, since it holds the full con
 
 ## 3. Assign roles
 
-`roles.builder` runs unattended work, so it must be a headless command, not `host`. Use `claude` or `codex` when that CLI is installed, or a `pi:` role. Work inside a session still happens in that session.
+`roles.builder` runs unattended work, so it must be a headless command, not `host`. Use `claude` or `codex` when that CLI is installed, or a `pi:` or `opencode:` role. Work inside a session still happens in that session.
 
 | Families | Builder | `reviewer` | `second` | Reports say |
 |---|---|---|---|---|
@@ -54,11 +54,19 @@ Write `~/.ff/config.json`. A project may override it in `.ff/config.json`. If th
 - `claude` and `codex` are built in, so they need no `executors` entry. Add one only for another tool, such as `grok -p`, and use its help to confirm flags. It must read the prompt from stdin and be able to write files without asking.
 - `profile` is `generic`, `gpt`, or `claude`, matching `../../playbook/executors/`.
 - On a multi-model host, a role can name a model directly: `pi:<vendor>/<model>:<effort>`.
-- Reviewers run read-only. `claude`, `codex`, and `pi:` roles get this automatically. Other executors need `reviewArgs`.
+- OpenCode roles use `opencode:<provider>/<model>` for builders, reviewers, and council advisers. Prompts stay in the run/review/council directory and travel through `--file`; `--dir` is the project root. The message asks the model to read through EOF using offsets when truncated and follow the file's final instructions. No real model is called during detection.
+- OpenCode reviews and council advisers select `ff-review`, defined for that child process through `OPENCODE_CONFIG_CONTENT` (OpenCode V1 agent configuration). Its permissions deny every tool except read, grep, glob, and list. No agent installation or user-config write is needed. This replaces inline config for that child process; ordinary user/project files still load. An unavailable agent marks the reviewer or adviser failed, with no review verdict. Builders keep their existing OpenCode permissions. See the [OpenCode configuration source](https://github.com/anomalyco/opencode/blob/v1.2.27/packages/opencode/src/config/config.ts) for the V1 format.
+- Reviewers run read-only. `claude`, `codex`, `pi:`, and `opencode:` roles get this automatically. Other executors need `reviewArgs`.
 - Credentials never go in this file.
 
 Create `~/.ff/my-rules.md` only if the user has rules to add. Do not overwrite one.
 
-## 5. Report
+## 5. Offer notifications and branch protection
+
+If the user wants to hear when long work ends, show them the settings in the README's "Notifications" section. They fill in `~/.ff/notify.env` themselves, because it holds credentials. Then run `ff notify --test`.
+
+If this repository should not take direct commits on its main branch, run `ff protect` here. It applies to one repository, so run it in each one that needs it.
+
+## 6. Report
 
 List the tools found, the role assignment, and any downgrade. Mention that third-party marketplaces may not auto-update, so the `update` skill exists for that.

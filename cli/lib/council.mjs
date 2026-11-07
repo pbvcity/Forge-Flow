@@ -4,7 +4,7 @@ import { readConfig } from './config.mjs';
 import { atomicWrite } from './fsx.mjs';
 import { excludeGitEntries } from './git.mjs';
 import { runProcess } from './proc.mjs';
-import { redactSecrets, resolveReviewer } from './review.mjs';
+import { redactSecrets, resolveReviewer, prepareReviewerPrompt, missingOpencodeAgent } from './review.mjs';
 import { newId } from './run.mjs';
 
 const instructions = `You are one of several independent advisers on a decision. You cannot see the others. Work read-only.
@@ -46,8 +46,9 @@ export async function council(args, cwd = process.cwd()) {
   const answers = await Promise.all(members.map(async (member, index) => {
     const executor = resolveReviewer(config, member);
     if (executor.note) return { member, status: 'absent', note: executor.note };
-    const result = await runProcess(executor.command, executor.args, { cwd, input: prompt, timeoutMs: options.minutes * 60000 });
-    const answered = result.exitCode === 0 && !result.timedOut && !result.error && result.stdout.trim();
+    const input = prepareReviewerPrompt(executor, prompt, cwd, join(dir, `${index + 1}-prompt.md`));
+    const result = await runProcess(executor.command, executor.args, { cwd, env: executor.env, input, timeoutMs: options.minutes * 60000 });
+    const answered = result.exitCode === 0 && !result.timedOut && !result.error && !(executor.promptFile && missingOpencodeAgent(result.stderr)) && result.stdout.trim();
     const file = join(dir, `${index + 1}-${member.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 70)}.md`);
     atomicWrite(file, redactSecrets(result.stdout + (answered ? '' : `\n${result.stderr}`)));
     return { member, status: answered ? 'answered' : 'failed', file };

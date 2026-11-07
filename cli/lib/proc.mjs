@@ -56,27 +56,43 @@ export function commandTemplate(text) {
   return { command: words[0], args: words.slice(1) };
 }
 
+const running = new Set();
+export const unstopped = [];
+const STOPPED = 'stopped by ff stop';
+let stopping = false;
+
+// Once stopping, nothing new starts. Git still runs, because saving the work needs it.
+export function stopRunning() {
+  stopping = true;
+  for (const stop of [...running]) stop();
+}
+
 export function runProcess(command, args = [], options = {}) {
   return new Promise(resolveResult => {
+    if (stopping && command !== 'git') { resolveResult({ pid: null, exitCode: null, signal: null, stdout: '', stderr: '', durationMs: 0, timedOut: true, idleTimedOut: false, reason: STOPPED, killedTree: true, error: null, outputTruncated: false }); return; }
     const start = Date.now();
     const stdout = [], stderr = [];
-    let child, overall, exited, finished = false, terminating = false;
+    let child, overall, idle, exited, finished = false, terminating = false;
     let outputTruncated = false;
-    let timedOut = false, reason = null, killedTree = false, error = null;
-    const env = { ...(options.env ?? process.env) };
+    let idleTimedOut = false, timedOut = false, reason = null, killedTree = false, error = null;
+    const env = { ...(options.env ?? process.env), FF_CHILD: '1' };
     for (const key of Object.keys(env)) if (/^(CLAUDECODE|CODEX_SANDBOX|CODEX_THREAD_ID)$/i.test(key)) delete env[key];
     const finish = (exitCode = null, signal = null) => {
       if (finished || terminating) return;
       finished = true;
+      running.delete(stop);
       clearTimeout(overall);
+      clearTimeout(idle);
       clearTimeout(exited);
-      resolveResult({ pid: child?.pid ?? null, exitCode, signal, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), durationMs: Date.now() - start, timedOut, reason, killedTree, error, outputTruncated });
+      resolveResult({ pid: child?.pid ?? null, exitCode, signal, stdout: Buffer.concat(stdout).toString('utf8'), stderr: Buffer.concat(stderr).toString('utf8'), durationMs: Date.now() - start, timedOut, idleTimedOut, reason, killedTree, error, outputTruncated });
     };
     const terminate = async why => {
       if (finished || terminating) return;
       terminating = true;
       timedOut = true;
       reason = why;
+      idleTimedOut = why === 'idle timeout: process went silent';
+      clearTimeout(idle);
       if (process.platform === 'win32') {
         const taskkill = join(process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows', 'System32', 'taskkill.exe');
         const result = spawnSync(taskkill, ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, timeout: 10000 });
@@ -94,8 +110,14 @@ export function runProcess(command, args = [], options = {}) {
       }
       terminating = false;
       // Release pipe handles even if a surviving descendant retained them.
+      if (why === STOPPED && killedTree !== true) unstopped.push(child.pid);
       child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); child.unref();
       finish(null, 'SIGKILL');
+    };
+    const stop = () => terminate(STOPPED);
+    const resetIdle = () => {
+      clearTimeout(idle);
+      if (!finished && !terminating && options.idleMs > 0) idle = setTimeout(() => terminate('idle timeout: process went silent'), options.idleMs);
     };
     try {
       const prepared = prepareSpawn(command, args, env, options.cwd);
@@ -108,6 +130,7 @@ export function runProcess(command, args = [], options = {}) {
       });
       const sizes = new Map();
       const capture = chunks => chunk => {
+        resetIdle();
         const limit = options.maxOutputBytes ?? 4 * 1024 * 1024;
         chunks.push(Buffer.from(chunk));
         let size = (sizes.get(chunks) ?? 0) + chunk.length;
@@ -122,8 +145,10 @@ export function runProcess(command, args = [], options = {}) {
       };
       child.stdout.on('data', capture(stdout)); child.stderr.on('data', capture(stderr));
       child.stdin.on('error', err => { if (err.code !== 'EPIPE') error = err.message; });
+      if (command !== 'git') running.add(stop);
       options.onSpawn?.(child.pid);
       child.stdin.end(options.input ?? '');
+      resetIdle();
       if (options.timeoutMs > 0) overall = setTimeout(() => terminate('overall timeout'), options.timeoutMs);
     } catch (err) { error = err.message; if (child?.pid) terminate('startup recording failed'); else finish(); }
   });

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { atomicWrite } from './fsx.mjs';
+import { resolveBuilder } from './config.mjs';
 
 export const unquote = text => text.trim().replace(/^`(.*)`$/, '$1');
 const ids = text => [...text.matchAll(/\bT\d\w*(?:[.-]\w+)*\b/gi)].map(match => match[0].toUpperCase());
@@ -15,13 +16,14 @@ function acceptLine(task, text) {
 function readField(task, name, value) {
   if (name === 'accept') { acceptLine(task, value); return; }
   task.details.push(`${name}: ${value}`);
+  if (name === 'executor') task.executor = unquote(value);
   if (name === 'risk') task.risk = value.match(/\w+/)?.[0].toLowerCase();
   if (name === 'depends' && !/^(?:none|no|-)?\s*$/i.test(value.replace(/`/g, ''))) {
     task.depends.push(...value.replace(/`/g, '').split(/[,;\s]+/).filter(Boolean).map(id => id.replace(/[.:]$/, '').toUpperCase()));
   }
 }
 
-export function parsePlan(text) {
+export function parsePlan(text, config) {
   const lines = text.split(/\r?\n/), tasks = [], notes = [], holds = [];
   let section = '', current = null, field = '', fence = false, hold = { open: false, text: '' };
   for (const [index, line] of lines.entries()) {
@@ -56,7 +58,7 @@ export function parsePlan(text) {
     if (/^\s*[-*+]\s+\[/.test(line)) { notes.push(`Skipped unparseable task at line ${index + 1}: ${line.trim()}`); current = null; continue; }
     if (!current) continue;
     current.body.push(line);
-    const named = line.match(/^\s*(Accept|Depends|Files|Risk):\s*(.*)$/i);
+    const named = line.match(/^\s*(Accept|Depends|Files|Risk|Executor):\s*(.*)$/i);
     if (named) { field = named[1].toLowerCase(); readField(current, field, named[2]); continue; }
     if (field === 'accept' && line.trim()) { acceptLine(current, line); continue; }
     current.details.push(line);
@@ -68,6 +70,11 @@ export function parsePlan(text) {
     return false;
   });
   for (const task of usable) {
+    if (config && task.executor !== undefined && !resolveBuilder(config, task.executor).cmd) {
+      const reason = `Unknown or unavailable Executor: ${task.executor} on ${task.id}; task held.`;
+      notes.push(reason);
+      holds.push({ id: task.id, reason });
+    }
     task.signature = createHash('sha256').update(JSON.stringify([task.id, task.title, task.body.map(line => line.trim()).join('\n').trim()])).digest('hex');
   }
   const exit = lines.find(line => /^\s*Exit condition:/i.test(line))?.replace(/^\s*Exit condition:\s*/i, '').trim() ?? '';
@@ -77,7 +84,7 @@ export function parsePlan(text) {
   return { text, lines, tasks: usable, notes, holds, goal, outcome, risk, exit, exitCommand: exit.match(/^`([^`]+)`/)?.[1] ?? '' };
 }
 
-export const readPlan = (cwd, path = 'PLAN.md') => parsePlan(readFileSync(resolve(cwd, path), 'utf8'));
+export const readPlan = (cwd, path = 'PLAN.md', config) => parsePlan(readFileSync(resolve(cwd, path), 'utf8'), config);
 
 export function writePlan(cwd, path, text) {
   const file = resolve(cwd, path);

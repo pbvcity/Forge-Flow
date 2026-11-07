@@ -38,6 +38,8 @@ The command-line tool needs Node 22 or newer. Then run setup once. It finds your
 
 Start with `go` and describe what you want. It picks how much process the work needs.
 
+For unattended plans, set `roles.fallback` to retry with another executor or switch after a provider limit. An optional `Executor:` task line selects its builder. Reports name the executor used; see [CLI configuration](cli/README.md#whole-plans).
+
 | Claude Code | Codex | Pi | What it does |
 |---|---|---|---|
 | `/ff:go` | `$ff:go` | `/ff-go` | Default entry. Sizes the task and takes it from there. |
@@ -63,10 +65,55 @@ Start with `go` and describe what you want. It picks how much process the work n
 - Each passing task is a commit. A failed task's work is kept on a branch, and the next task starts clean.
 - A stuck task goes to a clean lead process, which may narrow or split it. Every change to the plan is listed, and changed acceptance means the result needs your review.
 - A provider limit pauses the run. It does not fail your tasks.
+- No-output limits are per executor (`idleMinutes`): Codex defaults to 10 minutes; Claude and Pi are unlimited. A silent process is killed and retried once per attempt; a silent reviewer is failed without a verdict.
 - Contract and high-risk tasks are reviewed. Routine tasks are not, so read those commits.
 - It never pushes, merges, or goes live. You get a report in the morning.
 
-This needs a command-line builder. Setup configures `claude`, `codex`, or a Pi model.
+This needs a command-line builder. Setup configures `claude`, `codex`, a Pi model, or `opencode:<provider>/<model>`. OpenCode also supports read-only reviews; see [setup](skills/setup/SKILL.md).
+
+Use `ff wait [--timeout-min <n>]` as a host background task to wake the session when the latest run ends. It prints the status and summary path: exit 0 means complete, 1 means another ending or no run, and 3 means timeout. Without host background tasks, check `ff status` in a later session.
+
+A run can be stopped with `ff stop`, which saves unfinished work on a branch. `ff wait` blocks until a run ends. `ff cleanup` previews and removes old run records.
+
+## Notifications
+
+Keep dated later checks in root `FOLLOWUPS.md`: `- [ ] YYYY-MM-DD What to check. Evidence: <command or where to look>`. `ff status` shows due items; `ff followups` lists all open items and reports malformed lines. Gather and report the evidence, then tick the item. With notifications enabled, SessionStart sends one due reminder per repository per local day. See [follow-ups](cli/README.md#follow-ups).
+
+Forge Flow can tell you when work ends, by webhook, Telegram, or both. Nothing is sent until you configure it. Create `~/.ff/notify.env`:
+
+```
+FF_TELEGRAM_BOT_TOKEN=<bot token>
+FF_TELEGRAM_CHAT_ID=<chat id>
+FF_NOTIFY_WEBHOOK=<url>
+FF_NOTIFY_MIN_MINUTES=5
+FF_NOTIFY_LANG=en
+```
+
+Set either channel or both. `ff notify --test` sends a test message. `FF_NOTIFY_LANG` also takes `zh`.
+
+| When | Claude Code | Codex | Pi |
+|---|---|---|---|
+| `ff run --all` ends, cannot start, or pauses on a provider limit | Yes | Yes | Yes |
+| A turn that ran at least `FF_NOTIFY_MIN_MINUTES` finishes | Yes | Yes | Yes |
+| A turn ends in an API failure | Yes | No | Yes |
+| The prompt sits idle waiting for you | Yes | No | No |
+| A permission dialog in the main session needs you | Yes | No | No |
+
+Each turn sends at most one message, apart from permission dialogs, which each send one. Requests that are approved automatically, and those from sub-agents, send nothing. Text is cut short and known secret patterns are hidden. A failed send never affects the work. Codex runs plugin hooks only after you trust them once with `/hooks`.
+
+## Protect the main branch
+
+```
+ff protect
+```
+
+Run it once in each repository. It installs a git `commit-msg` hook that refuses commits on `main`, `master`, and the origin default branch, in every worktree and from every tool. With a relative `core.hooksPath`, it covers only the worktree you ran it in, and it says so. Messages starting with `docs:` or `docs(`, and merge commits, still pass. `FF_ALLOW_MAIN=1 git commit ...` overrides it once.
+
+Add a branch with `--branch <name>`. `--status` shows the state, and `--remove` takes it out. A local hook is a safety net, and `--no-verify` skips it. For a rule nobody can skip, also turn on branch protection on your git host.
+
+## Cleanup
+
+Run `ff cleanup` to preview old run, review, and council records and merged local `ff/*` branches. Add `--apply` to delete them. Records keep the newest 20 per directory and must be older than 30 days; override with `--keep`, `--days`, or `cleanup: { keep, days }` in config. Active runs, backup names, and unmerged branches are kept. See [CLI cleanup](cli/README.md#cleanup).
 
 ## Models
 

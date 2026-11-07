@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { readConfig, resolveBuilder } from './config.mjs';
+import { promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { runProcess, commandTemplate } from './proc.mjs';
 import { atomicWrite } from './fsx.mjs';
 import { excludeGitEntries } from './git.mjs';
@@ -53,7 +53,8 @@ export function resolveReviewer(config, member) {
   if (!resolved.cmd) return { note: `No executor configured for reviewer ${member}` };
   const template = Array.isArray(resolved.cmd) ? { command: resolved.cmd[0], args: resolved.cmd.slice(1) } : commandTemplate(resolved.cmd);
   let extra;
-  if (member.startsWith('pi:')) extra = ['--tools', 'read,grep,find,ls'];
+  if (member.startsWith('opencode:')) extra = ['--agent', 'ff-review'];
+  else if (member.startsWith('pi:')) extra = ['--tools', 'read,grep,find,ls'];
   else if (resolved.reviewArgs !== undefined) {
     if (Array.isArray(resolved.reviewArgs)) extra = resolved.reviewArgs;
     else {
@@ -79,8 +80,20 @@ export function resolveReviewer(config, member) {
     if (argv[i] === '--model' || argv[i] === '-m') model = argv[++i];
     else if (typeof argv[i] === 'string' && argv[i].startsWith('--model=')) model = argv[i].slice(8);
   }
-  return { command: template.command, args: argv, model: member.startsWith('pi:') ? member.slice(3) : model ?? 'unspecified (executor default)' };
+  const env = member.startsWith('opencode:') ? { ...process.env, OPENCODE_CONFIG_CONTENT: JSON.stringify({ agent: { 'ff-review': {
+    description: 'Read-only Forge Flow reviewer', mode: 'primary',
+    permission: { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' },
+  } } }) } : undefined;
+  return { command: template.command, args: argv, env, promptFile: resolved.promptFile, idleMinutes: resolved.idleMinutes, model: member.startsWith('pi:') ? member.slice(3) : model ?? 'unspecified (executor default)' };
 }
+
+export function prepareReviewerPrompt(executor, prompt, cwd, promptPath) {
+  if (!executor.promptFile) return prompt;
+  atomicWrite(promptPath, prompt);
+  executor.args.push(...promptFileArgs(cwd, promptPath));
+}
+
+export const missingOpencodeAgent = stderr => /agent "ff-review" not found\. Falling back to default agent/i.test(stderr);
 
 function removeArgs(args, pairs, flags) {
   return args.filter((arg, index) => !flags.includes(arg) && !pairs.includes(arg) && !pairs.includes(args[index - 1]) && !pairs.some(flag => arg.startsWith(`${flag}=`)));
@@ -123,16 +136,22 @@ function reviewers(config, risk, round, wantPanel) {
   return round === 1 && contractTier && config.roles.second ? [lead, config.roles.second] : [lead];
 }
 
-async function runReviewer(config, member, prompt, cwd, minutes) {
+const reviewerEnvironmentFailures = ['CreateProcessAsUserW failed: 1920', 'code-mode host exited during handshake'];
+
+async function runReviewer(config, member, prompt, cwd, minutes, promptPath) {
   const base = { member, model: String(member), status: 'absent', durationMs: 0, verdict: 'unknown', warnings: [] };
   const executor = resolveReviewer(config, member);
   if (executor.note) return { row: { ...base, note: executor.note }, stdout: `${executor.note}\n`, stderr: '' };
-  const result = await runProcess(executor.command, executor.args, { cwd, input: prompt, timeoutMs: minutes * 60000 });
+  const input = prepareReviewerPrompt(executor, prompt, cwd, promptPath);
+  const result = await runProcess(executor.command, executor.args, { cwd, env: executor.env, input, timeoutMs: minutes * 60000, idleMs: executor.idleMinutes * 60000 });
+  const signals = reviewerEnvironmentFailures.filter(signature => !prompt.includes(signature));
+  const environmentFailure = signals.find(signature => result.stdout.includes(signature) || result.stderr.includes(signature))
+    || (executor.promptFile && missingOpencodeAgent(result.stderr) ? 'OpenCode read-only agent unavailable' : undefined);
   const parsed = parseReview(result.stdout);
-  const status = result.timedOut ? 'timeout' : result.error || result.exitCode !== 0 || result.signal ? 'failed' : 'completed';
+  const status = environmentFailure || result.idleTimedOut ? 'failed' : result.timedOut ? 'timeout' : result.error || result.exitCode !== 0 || result.signal ? 'failed' : 'completed';
   const warnings = [...parsed.warnings, ...(result.outputTruncated ? ['Output truncated: last 4 MiB per stream retained'] : [])];
-  const verdict = parsed.verdict === 'PASS' && (status !== 'completed' || result.outputTruncated) ? 'unknown' : parsed.verdict;
-  return { row: { ...base, verdict, warnings, model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, pid: result.pid, error: result.error }, stdout: result.stdout, stderr: result.stderr };
+  const verdict = environmentFailure ? 'unknown' : parsed.verdict === 'PASS' && (status !== 'completed' || result.outputTruncated) ? 'unknown' : parsed.verdict;
+  return { row: { ...base, verdict, warnings, model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, ...(result.idleTimedOut ? { idleTimedOut: true, note: result.reason } : {}), ...(environmentFailure ? { note: environmentFailure } : {}), pid: result.pid, error: result.error }, stdout: result.stdout, stderr: result.stderr };
 }
 
 export async function reviewChange({ root, cwd, config, base, risk, round = 1, panel = false, plan, scope, minutes = 60 }) {
@@ -144,7 +163,7 @@ export async function reviewChange({ root, cwd, config, base, risk, round = 1, p
   const prompt = reviewPrompt({ root, cwd, base, plan, scope, round, diff });
   const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
   const dir = join(cwd, '.ff/reviews', id);
-  const results = await Promise.all(members.map(member => runReviewer(config, member, prompt, cwd, minutes).catch(error => ({ row: { member, model: String(member), status: 'failed', durationMs: 0, verdict: 'unknown', warnings: [], note: error.message }, stdout: `${error.message}\n`, stderr: '' }))));
+  const results = await Promise.all(members.map((member, index) => runReviewer(config, member, prompt, cwd, minutes, join(dir, `${index + 1}-prompt.md`)).catch(error => ({ row: { member, model: String(member), status: 'failed', durationMs: 0, verdict: 'unknown', warnings: [], note: error.message }, stdout: `${error.message}\n`, stderr: '' }))));
   // Publish only after every process exits: running peers cannot read this panel's results.
   results.forEach((result, index) => {
     const name = `${index + 1}-${String(result.row.member).replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 70)}`;

@@ -4,6 +4,8 @@
 
 [English](README.md)
 
+把日后要回头看的事记在根目录的 `FOLLOWUPS.md`：`- [ ] YYYY-MM-DD 要查什么。Evidence: <命令或查看位置>`。`ff status` 显示到期项，`ff followups` 列出全部未完成项并报告格式错误的行。先取证并汇报，再打勾。配置通知后，每个仓库每天最多在会话开始时提醒一次。详见[跟进事项](cli/README.md#follow-ups)。
+
 Forge Flow 可以在 Claude Code、Codex 和 Pi 上运行，你有哪些模型就用哪些。不需要账号，也不需要服务器。采用 MIT 许可。
 
 ## 安装
@@ -38,6 +40,10 @@ pi install git:github.com/pbvcity/Forge-Flow
 
 从 `go` 开始，说清你要什么就行。需要走多少流程，由它判断。
 
+无人值守计划可设置 `roles.fallback`，在重试或额度受限时换用备用执行器。任务可用 `Executor:` 指定执行器，报告会注明实际使用者。详见 [CLI 配置](cli/README.md#whole-plans)。
+
+OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角色。`doctor` 会列出可用模型，提示词文件和评审权限的说明见 [setup](skills/setup/SKILL.md)。
+
 | Claude Code | Codex | Pi | 作用 |
 |---|---|---|---|
 | `/ff:go` | `$ff:go` | `/ff-go` | 默认入口。判断任务大小，然后接着做。 |
@@ -63,10 +69,53 @@ pi install git:github.com/pbvcity/Forge-Flow
 - 每个通过的任务是一个提交。失败任务的工作保留在分支上，下一个任务从干净状态开始。
 - 卡住的任务交给干净的主控进程，它可以收窄或拆分任务。计划的每处改动都会列出，验收被改过的结果要你复核。
 - 模型额度用尽时运行会暂停，不会把任务判为失败。
+- 无输出超时按执行者配置（`idleMinutes`）：Codex 默认 10 分钟，Claude 和 Pi 默认不限。静默进程会被终止，每次尝试可免费重试一次。评审静默超时记为执行失败，但它已打印的 FAIL 仍然有效。
 - 契约档和高风险任务会评审。常规任务不评审，这些提交要你自己读。
 - 它不会推送、合并或上线。第二天早上你会看到一份报告。
 
 这需要一个能在命令行运行的执行者，配置时会设好 `claude`、`codex` 或 Pi 上的模型。
+
+把 `ff wait [--timeout-min <n>]` 作为宿主后台任务运行，最新一次运行结束时即可唤醒会话。它输出状态和摘要路径：退出码 0 表示完成，1 表示其他结束方式或没有运行记录，3 表示等待超时。宿主没有后台任务时，在后续会话用 `ff status` 查看。
+
+`ff stop` 可以停止运行，未完成的工作会存到分支上。`ff wait` 会一直等到运行结束。`ff cleanup` 预览并清理旧运行记录。
+
+## 通知
+
+Forge Flow 可以在工作结束时通过 webhook、Telegram 或两者通知你。不配置就不发送。创建 `~/.ff/notify.env`：
+
+```
+FF_TELEGRAM_BOT_TOKEN=<机器人令牌>
+FF_TELEGRAM_CHAT_ID=<会话 ID>
+FF_NOTIFY_WEBHOOK=<地址>
+FF_NOTIFY_MIN_MINUTES=5
+FF_NOTIFY_LANG=zh
+```
+
+两个渠道可以只配一个。`ff notify --test` 发送测试消息。
+
+| 时机 | Claude Code | Codex | Pi |
+|---|---|---|---|
+| `ff run --all` 结束、无法启动或因额度暂停 | 是 | 是 | 是 |
+| 运行至少 `FF_NOTIFY_MIN_MINUTES` 分钟的一轮结束 | 是 | 是 | 是 |
+| 一轮因 API 错误结束 | 是 | 否 | 是 |
+| 输入框空闲，等你回应 | 是 | 否 | 否 |
+| 主会话弹出权限请求，需要你批准 | 是 | 否 | 否 |
+
+每轮最多发一条，权限弹窗除外，每个弹窗发一条。自动批准的请求和子代理的请求不发。消息会截短，已知的密钥格式会被隐藏。发送失败不影响工作。Codex 要先用 `/hooks` 信任一次插件的钩子才会运行。
+
+## 保护主分支
+
+```
+ff protect
+```
+
+每个仓库运行一次。它安装一个 git `commit-msg` 钩子，拒绝在 `main`、`master` 和 origin 默认分支上提交，对所有工作树和所有工具都生效。如果 `core.hooksPath` 是相对路径，它只覆盖当前工作树，并会明确提示。以 `docs:` 或 `docs(` 开头的提交和合并提交仍可通过。`FF_ALLOW_MAIN=1 git commit ...` 可放行一次。
+
+用 `--branch <名称>` 增加分支，`--status` 查看状态，`--remove` 移除。本地钩子只是兜底，`--no-verify` 可以跳过。要做到谁都跳不过，请在代码托管平台上再开分支保护。
+
+## 清理
+
+`ff cleanup` 预览旧的运行、评审和合议记录，以及已合并的本地 `ff/*` 分支，加 `--apply` 才删除。每个目录保留最新 20 项，且只删 30 天以前的，可用 `--keep`、`--days` 或配置里的 `cleanup: { keep, days }` 调整。运行中的记录、名字含备份字样的内容和未合并分支都会保留。详见 [CLI 清理](cli/README.md#cleanup)。
 
 ## 模型
 

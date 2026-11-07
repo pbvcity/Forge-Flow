@@ -56,7 +56,7 @@ If the tool is missing, read the diff for the same things yourself.
 
 Meet the verification row for the tier. Then:
 
-1. Update docs that the change made wrong, and do small follow-ups now.
+1. Update docs that the change made wrong, and do small follow-ups now. On contract or high work, put each dated "Next look" into the repository's `FOLLOWUPS.md` as `- [ ] YYYY-MM-DD What to check. Evidence: <command or where to look>`. Later checks stay open until their evidence is gathered and reported.
 2. Hand to the `review` skill for contract and high. For routine, the lead decides as "Risk tiers" describes.
 3. If the repository has a remote, close through its normal flow: work branch, commit, PR, CI. Read the CI result before calling it finished. Without a remote, leave the changes in the working tree unless the user asked for commits, and say so.
 4. End your report with what changed, what you ran with real results, what you skipped or left unchecked, the remaining risk, and every open item in `DECISIONS.md` for the user to confirm one by one. Going live waits until the user has confirmed the items the release carries.

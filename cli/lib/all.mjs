@@ -1,14 +1,16 @@
 import { spawn } from 'node:child_process';
-import { closeSync, existsSync, openSync } from 'node:fs';
+import { closeSync, existsSync, openSync, rmSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { readConfig, resolveBuilder } from './config.mjs';
+import { promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { acquireLock, releaseLock, atomicWrite, read } from './fsx.mjs';
-import { runProcess, shellCommand } from './proc.mjs';
+import { runProcess, shellCommand, stopRunning, unstopped } from './proc.mjs';
 import { commitAll, commitPaths, excludeGitEntries, git, startRunBranch } from './git.mjs';
 import { holdOn, parsePlan, readPlan, setBox, writePlan } from './plan.mjs';
 import { attempt, decisionLines, executorIsLive, invocation, latestRun, newId, runExcludes, runIsLive, workerPrompt } from './run.mjs';
 import { auditDiff } from './audit.mjs';
+import { stopFile, stoppedNote } from './stop.mjs';
+import { notifyRun } from './notify.mjs';
 import { readDiff } from './diff.mjs';
 import { reviewChange } from './review.mjs';
 
@@ -94,13 +96,13 @@ function taskCard(run, plan, task, evidence) {
 }
 
 function save(run) {
-  const { id, plan, branch, pid, startedAt, status, current, currentSince, note, executorPid, tasks } = run;
-  atomicWrite(join(run.dir, 'run.json'), JSON.stringify({ id, kind: 'plan', plan, branch, pid, startedAt, status, current, currentSince, note, executorPid, tasks }, null, 2));
+  const { id, plan, branch, pid, startedAt, status, current, currentSince, note, stop, executorPid, tasks } = run;
+  atomicWrite(join(run.dir, 'run.json'), JSON.stringify({ id, kind: 'plan', plan, branch, pid, startedAt, status, current, currentSince, note, stop, executorPid, tasks }, null, 2));
 }
 
 function settle(run, task, status, fields = {}) {
   run.settled.add(task.id);
-  run.tasks[task.id] = { title: task.title, status, ...fields };
+  run.tasks[task.id] = { ...run.tasks[task.id], title: task.title, status, ...fields };
   run.current = '';
   save(run);
 }
@@ -152,7 +154,7 @@ async function returnToBranch(run, task) {
 }
 
 function snapshotPlan(run) {
-  const plan = readPlan(run.cwd, run.plan);
+  const plan = readPlan(run.cwd, run.plan, run.config);
   atomicWrite(join(run.dir, 'plan-before.md'), plan.text);
   return plan;
 }
@@ -196,7 +198,7 @@ function lowersAGate(before, after) {
 // Runs after every process. Only the tool ticks tasks, holds and tiers stay, the exit condition stays, and every change to the plan is reported.
 function guardPlan(run, before, who) {
   let after;
-  try { after = readPlan(run.cwd, run.plan); } catch {}
+  try { after = readPlan(run.cwd, run.plan, run.config); } catch {}
   if (!after || (before.tasks.length && !after.tasks.length)) {
     restorePlan(run, before, `${who} damaged ${run.plan}; restored.`);
     return { edited: false };
@@ -209,11 +211,11 @@ function guardPlan(run, before, who) {
   for (const task of after.tasks) if (task.done && !ticked.has(task.id)) setBox(run.cwd, run.plan, task.id, false);
   if (after.exit !== before.exit) {
     const line = /^\s*Exit condition:.*$/m, saved = before.text.match(line)?.[0];
-    const text = readPlan(run.cwd, run.plan).text;
+    const text = readPlan(run.cwd, run.plan, run.config).text;
     writePlan(run.cwd, run.plan, saved && line.test(text) ? text.replace(line, () => saved) : before.text);
     run.planNotes.push(`${who} tried to change the exit condition; undone.`);
   }
-  const changes = planChanges(before, readPlan(run.cwd, run.plan));
+  const changes = planChanges(before, readPlan(run.cwd, run.plan, run.config));
   const summary = describeChanges(changes);
   if (summary) run.planNotes.push(`${who} ${summary}.`);
   if (changes.removed.length || changes.acceptChanged.length) run.criteriaChanged = true;
@@ -232,14 +234,28 @@ async function checkChange(run, plan, task) {
   return { warnings, review: review.exitCode === 0 ? `reviewed${review.partial ? ' (large diff, partly)' : ''}` : 'review unavailable' };
 }
 
+function checkStop(run) {
+  if (run.stopRequested || !existsSync(stopFile(run.cwd))) return;
+  rmSync(stopFile(run.cwd), { force: true });
+  run.stopRequested = true;
+  run.stop = stoppedNote;
+  stopRunning();
+  run.wake?.();
+}
+
 async function waitForProvider(run) {
   const schedule = run.config.run.limitWaitMinutes;
   if (run.limitWaits >= schedule.length) return false;
   const minutes = schedule[run.limitWaits++];
   run.current = `provider limit: waiting ${minutes} min`;
   save(run);
-  await sleep(minutes);
-  return true;
+  if (run.limitWaits === 1) await notifyRun(run.cwd, 'paused', `Provider limit. Waiting ${minutes} min, then retrying.`);
+  if (run.stopRequested) return false;
+  await new Promise(done => {
+    const timer = setTimeout(done, minutes * 60000);
+    run.wake = () => { clearTimeout(timer); done(); };
+  });
+  return !run.stopRequested;
 }
 
 function reportLine(report) {
@@ -247,18 +263,26 @@ function reportLine(report) {
 }
 
 async function carryTask(run, task) {
-  const plan = readPlan(run.cwd, run.plan);
+  const plan = readPlan(run.cwd, run.plan, run.config);
   if (!task.accept.length) { settle(run, task, 'unverified', { note: 'no Accept commands; left unticked' }); return; }
   let evidence = '', last;
+  let executor = task.executor ?? run.builderRole;
+  const fallback = run.config.roles.fallback;
+  const fallbackBuilder = fallback ? resolveBuilder(run.config, fallback) : null;
+  let idleRetried = false;
   for (let number = 1; number <= 2; number++) {
+    if (number === 2 && fallbackBuilder?.cmd) executor = fallback;
+    const builder = resolveBuilder(run.config, executor);
+    run.tasks[task.id] = { executor };
     run.current = `${task.id} ${task.title} (attempt ${number})`;
     run.currentSince = new Date().toISOString();
     save(run);
     const dir = join(run.dir, `${task.id}-${number}-${Date.now()}`);
-    const prompt = workerPrompt(taskCard(run, plan, task, evidence), run.builder, run.root, run.cwd, run.config);
+    const prompt = workerPrompt(taskCard(run, plan, task, evidence), builder, run.root, run.cwd, run.config);
     const before = snapshotPlan(run);
-    last = await attempt({ builder: run.builder, prompt, commands: task.accept, cwd: run.cwd, dir, minutes: run.minutes, onPid: pid => { run.executorPid = pid; save(run); } });
-    run.executorPid = undefined;
+    last = await attempt({ builder, prompt, commands: task.accept, cwd: run.cwd, dir, minutes: run.minutes, onPid: pid => { run.executorPid = pid; save(run); } });
+    atomicWrite(join(dir, 'executor.txt'), `${executor}
+`);
     guardPlan(run, before, `During ${task.id}, the worker`);
     if (last.treeUnconfirmed) {
       run.executorPid = last.pid;
@@ -269,23 +293,41 @@ async function carryTask(run, task) {
     const strayed = await returnToBranch(run, task);
     if (strayed) {
       run.planNotes.push(`During ${task.id}, ${strayed}.`);
-      last = { ...last, status: 'failed', limited: false, note: strayed, evidence: strayed };
+      last = { ...last, status: 'failed', limited: false, idleTimedOut: false, note: strayed, evidence: strayed };
     }
-    if (run.stop) { settle(run, task, 'stopped', { note: run.stop }); return; }
+    if (run.stop) { settle(run, task, 'stopped', { note: run.stop, ...(run.stopRequested ? { parked: await parkWork(run, task) } : {}) }); return; }
     if (last.limited) {
       number--;
+      if (fallbackBuilder?.cmd && executor !== fallback) {
+        run.note = `Provider limit on ${executor} during ${task.id}; switched to ${fallback} for the rest of the run.`;
+        run.planNotes.push(run.note);
+        executor = run.builderRole = fallback;
+        run.builder = fallbackBuilder;
+        idleRetried = false;
+        save(run);
+        continue;
+      }
       if (await waitForProvider(run)) continue;
+      if (run.stopRequested) { settle(run, task, 'stopped', { note: run.stop, parked: await parkWork(run, task) }); return; }
       run.stop = 'The provider limit did not clear. Run ff run --all when quota returns.';
       settle(run, task, 'waiting', { note: last.note });
       return;
     }
     run.limitWaits = 0;
+    if (last.idleTimedOut && !idleRetried) {
+      idleRetried = true;
+      evidence = `${last.note}\n${last.evidence ?? ''}`.trim().slice(-12000);
+      number--;
+      continue;
+    }
+    idleRetried = false;
     if (last.status === 'blocked') {
       settle(run, task, 'held', { note: last.note, parked: await parkWork(run, task) });
       return;
     }
     if (last.status === 'passed') {
       const check = await checkChange(run, plan, task);
+      if (run.stopRequested) { settle(run, task, 'stopped', { note: run.stop, parked: await parkWork(run, task) }); return; }
       if (check.failed) last = { ...last, note: 'review found blocking issues', evidence: check.evidence };
       else {
         setBox(run.cwd, run.plan, task.id, true);
@@ -332,7 +374,7 @@ function leadCard(run, task, evidence, reportFile) {
 
 // A clean process looks at a stuck task with fresh eyes and may reshape the plan.
 async function replan(run, task, evidence) {
-  if (run.leadRuns >= maxLeadRuns || run.leads.has(task.id)) return;
+  if (run.stop || run.leadRuns >= maxLeadRuns || run.leads.has(task.id)) return;
   run.leadRuns++;
   run.leads.add(task.id);
   run.current = `lead reviewing ${task.id}`;
@@ -342,20 +384,27 @@ async function replan(run, task, evidence) {
   const card = leadCard(run, task, evidence, reportFile);
   atomicWrite(join(dir, 'prompt.md'), card);
   const { command, args } = invocation(run.builder);
+  if (run.builder.promptFile) args.push(...promptFileArgs(run.cwd, join(dir, 'prompt.md')));
   const lead = await runProcess(command, args, {
-    cwd: run.cwd, input: card, timeoutMs: run.minutes * 60000, env: { ...process.env, FF_RESULT_FILE: reportFile },
+    cwd: run.cwd, input: run.builder.promptFile ? undefined : card, timeoutMs: run.minutes * 60000, idleMs: run.builder.idleMinutes * 60000, env: { ...process.env, FF_RESULT_FILE: reportFile },
     onSpawn: pid => { run.executorPid = pid; save(run); },
   });
-  run.executorPid = undefined;
+  if (!lead.timedOut || lead.killedTree === true) {
+    run.executorPid = undefined;
+    save(run);
+  }
   atomicWrite(join(dir, 'output.txt'), `${lead.stdout}\n${lead.stderr}`);
   if (lead.timedOut && lead.killedTree !== true) {
-    run.executorPid = lead.pid;
     run.stop = `The lead reviewing ${task.id} timed out and may still be alive (pid ${lead.pid}).`;
     return;
   }
   const { edited, changes } = guardPlan(run, before, `After ${task.id}, the lead`);
   await returnToBranch(run, task);
-  if (run.repo && !run.stop) await keepPlanEdits(run, task);
+  if (run.repo && run.stopRequested) {
+    const parked = await parkWork(run, task);
+    if (parked) run.tasks[task.id].parked = [run.tasks[task.id].parked, parked].filter(Boolean).join(', ');
+  }
+  else if (run.repo && !run.stop) await keepPlanEdits(run, task);
   const said = reportLine(read(reportFile)) || 'no report';
   run.planNotes.push(`After ${task.id}, the lead reported: ${said} Details: ${join('.ff/runs', run.id, `lead-${task.id}`)}.`);
   if (edited) for (const id of [task.id, ...changes.changed, ...changes.added]) run.settled.delete(id);
@@ -387,15 +436,19 @@ async function checkExit(run, plan) {
 }
 
 async function finish(run) {
-  const plan = readPlan(run.cwd, run.plan);
+  const plan = readPlan(run.cwd, run.plan, run.config);
   const states = plan.tasks.map(task => ({ task, state: finalState(plan, run, task) }));
   const allDone = states.every(({ state }) => state.status === 'done');
   const exit = run.stop ? 'not checked' : await checkExit(run, plan);
+  if (run.stopRequested && unstopped.length) {
+    run.executorPid = unstopped[0];
+    run.stop = `Could not confirm that pid ${unstopped.join(', ')} ended. Check before starting another run.`;
+  }
   const finished = states.length > 0 && allDone && !run.stop && exit !== 'failed' && !plan.notes.length;
   const complete = finished && !run.criteriaChanged;
   const status = complete ? 'complete' : finished ? 'needs review' : run.stop ? 'stopped' : 'incomplete';
   const row = ({ task, state }) => {
-    const facts = [state.commit, state.attempts > 1 ? `${state.attempts} attempts` : '', state.review, ...(state.warnings ?? []), state.note, state.parked ? `work kept on ${state.parked}` : ''].filter(Boolean);
+    const facts = [state.commit, state.attempts > 1 ? `${state.attempts} attempts` : '', state.review, ...(state.warnings ?? []), state.note, state.parked ? `work kept on ${state.parked}` : '', state.executor ? `executor: ${state.executor}` : ''].filter(Boolean);
     return `- ${task.id} ${task.title}: ${state.status}${facts.length ? ` — ${facts.join('; ')}` : ''}${state.report ? `\n  ${state.report}` : ''}`;
   };
   const decisions = decisionLines(run.cwd);
@@ -416,13 +469,15 @@ async function finish(run) {
   run.note = `Exit condition: ${exit}`;
   run.current = '';
   save(run);
+  const counts = `${states.filter(({ state }) => state.status === 'done').length} of ${states.length} tasks done.`;
+  await notifyRun(run.cwd, complete ? 'done' : run.stopRequested ? 'paused' : 'failed', [`${plan.goal || run.plan}: ${status}. ${counts}`, run.stop].filter(Boolean).join('\n'));
   return complete ? 0 : 1;
 }
 
 // A controller that died left a process's plan edits unchecked. The snapshot from before that process settles them.
 function recoverPlan(run, dead) {
   const snapshot = read(join(run.cwd, '.ff/runs', dead.id, 'plan-before.md'));
-  if (snapshot) guardPlan(run, parsePlan(snapshot), 'Before the last run died, a process');
+  if (snapshot) guardPlan(run, parsePlan(snapshot, run.config), 'Before the last run died, a process');
 }
 
 async function openWorktree(run, interrupted) {
@@ -442,7 +497,8 @@ async function openWorktree(run, interrupted) {
 
 export async function runAll(args, root, cwd = process.cwd()) {
   const options = parseArgs(args);
-  const plan = readPlan(cwd, options.plan);
+  const { config } = readConfig(cwd);
+  const plan = readPlan(cwd, options.plan, config);
   if (!plan.tasks.length) { console.error([`No tasks found in ${options.plan}. Expected "- [ ] T1 <outcome>" under "## Tasks".`, ...plan.notes].join('\n')); return 1; }
   if (options.dryRun) {
     console.log(`Dry run: ${options.plan} (current plan; no processes or writes)`);
@@ -453,7 +509,6 @@ export async function runAll(args, root, cwd = process.cwd()) {
     }
     return 0;
   }
-  const { config } = readConfig(cwd);
   const builder = resolveBuilder(config);
   if (!builder.cmd) {
     console.error(`${builder.note}\nUnattended runs need a headless builder: set roles.builder to claude, codex, or pi:<vendor>/<model>:<effort> in ~/.ff/config.json. Or work through the plan in this session.`);
@@ -461,6 +516,7 @@ export async function runAll(args, root, cwd = process.cwd()) {
   }
   if (!options.foreground) return detach(args, cwd, newId());
   const id = options.id || newId();
+  let watcher;
   const lock = acquireLock(join(cwd, '.ff/run.lock'), options.force);
   if (!lock.ok) { console.error(`Worktree busy: ${lock.reason} (pid ${lock.pid ?? 'unknown'}). Use ff status; --force overrides.`); return 1; }
   try {
@@ -470,17 +526,28 @@ export async function runAll(args, root, cwd = process.cwd()) {
       return 1;
     }
     const run = {
-      id, dir: join(cwd, '.ff/runs', id), cwd, root, config, builder, plan: options.plan, minutes: options.minutes,
+      id, dir: join(cwd, '.ff/runs', id), cwd, root, config, builder, builderRole: config.roles.builder, plan: options.plan, minutes: options.minutes,
       pid: process.pid, startedAt: new Date().toISOString(), status: 'running', current: '', tasks: {},
       settled: new Set(), leads: new Set(), leadRuns: 0, planNotes: [], parks: 0, limitWaits: 0, rules: playbookRules(root),
     };
     for (const note of plan.notes) console.error(`Note: ${note}`);
-    if (!await openWorktree(run, last?.kind === 'plan' && last.status === 'running' && last.plan === run.plan ? last : null)) return 1;
+    if (!await openWorktree(run, last?.kind === 'plan' && last.status === 'running' && last.plan === run.plan ? last : null)) {
+      await notifyRun(cwd, 'failed', `${options.plan}: the run could not start.`);
+      return 1;
+    }
     save(run);
-    for (let task = nextTask(readPlan(cwd, run.plan), run); task && !run.stop; task = nextTask(readPlan(cwd, run.plan), run)) {
+    rmSync(stopFile(cwd), { force: true });
+    watcher = setInterval(() => checkStop(run), 1000);
+    for (let task = nextTask(readPlan(cwd, run.plan, run.config), run); task && !run.stop; task = nextTask(readPlan(cwd, run.plan, run.config), run)) {
       try { await carryTask(run, task); }
-      catch (error) { run.stop = `${task.id}: ${error.message}`; }
+      catch (error) {
+        run.stop ??= `${task.id}: ${error.message}`;
+        if (!run.tasks[task.id]?.status) settle(run, task, 'stopped', { note: run.stop });
+      }
     }
     return await finish(run);
-  } finally { releaseLock(lock); }
+  } finally {
+    clearInterval(watcher);
+    releaseLock(lock);
+  }
 }

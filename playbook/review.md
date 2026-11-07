@@ -89,6 +89,8 @@ Close every contract or high review with at most eight lines:
 - Who catches it (alert, flag, rollback):
 - Next look:
 
+On contract or high work, copy each "Next look" with a date into the repository's `FOLLOWUPS.md`: `- [ ] YYYY-MM-DD What to check. Evidence: <command or where to look>`. Do checks that are possible now; only later checks remain open. Gather and report the evidence before ticking an item.
+
 Keep known-accepted items in `REVIEW.md`, and feed them to the next review so they are not raised again.
 
 ## Contract and high checklist

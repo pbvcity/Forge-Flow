@@ -39,6 +39,7 @@ Not doing: <what is out of scope, and optional items left out>
   Files: <main files>
   Depends: <task IDs, or none>
   Risk: <tier, when it differs from the plan>
+  Executor: <optional executor name or pi:vendor/model:effort>
 
 ## Needs a person
 
@@ -50,6 +51,8 @@ Not doing: <what is out of scope, and optional items left out>
 ```
 
 Record business details you choose in `DECISIONS.md`, not here, so they reach the list the user confirms.
+
+Omit `Executor:` to use `roles.builder`. A task's `Executor:` overrides that default; unknown executors produce a plan note and hold only that task. `roles.fallback` is empty by default. When configured, it handles a task's second attempt only, or becomes the run's builder after a provider limit. Further limits use the existing wait schedule. Reports name the executor used.
 
 - Each task has at least one `Accept:` command that exits non-zero on failure. Run it now if it can run, so you know it is well formed.
 - If only a person can accept something (real device, real money, a look at the page), put it under "Needs a person" with exact steps.

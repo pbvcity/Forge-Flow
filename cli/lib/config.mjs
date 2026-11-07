@@ -4,14 +4,17 @@ import { join } from 'node:path';
 
 export const builtInExecutors = {
   claude: { cmd: 'claude -p --permission-mode acceptEdits --allowedTools Read,Edit,Write,Bash', profile: 'claude' },
-  codex: { cmd: 'codex exec --sandbox workspace-write -c approval_policy=never -c sandbox_workspace_write.network_access=true', profile: 'gpt' },
+  codex: { cmd: 'codex exec --sandbox workspace-write -c approval_policy=never -c sandbox_workspace_write.network_access=true', profile: 'gpt', idleMinutes: 10 },
 };
+
+export const promptFileArgs = (cwd, file) => ['Read the entire attached prompt file. If truncated, continue reading with offset until EOF before acting. Follow the instructions at the end of the file.', '--dir', cwd, '--file', file];
 
 export function configDefaults(home = homedir()) {
   return {
-    roles: { builder: 'host', reviewer: 'host', second: '' },
+    roles: { builder: 'host', reviewer: 'host', second: '', fallback: '' },
     executors: { ...builtInExecutors },
     review: { panel: [] },
+    cleanup: { keep: 20, days: 30 },
     run: { limitWaitMinutes: [5, 15, 30, 60, 60, 60, 60, 60, 60, 60] },
     playbook: join(home, '.ff/my-rules.md'),
     update: { repo: 'https://github.com/pbvcity/Forge-Flow.git', timeoutMs: 180000 },
@@ -28,12 +31,12 @@ export function readConfig(cwd = process.cwd(), home = homedir(), warn = console
     if (!value || typeof value !== 'object' || Array.isArray(value)) { warn(`${path}: expected an object; using defaults`); continue; }
     for (const [key, item] of Object.entries(value)) {
       if (!Object.hasOwn(config, key)) warn(`${path}: unknown key ${key}`);
-      if (['roles', 'executors', 'review', 'run', 'update'].includes(key)) {
+      if (['roles', 'executors', 'review', 'run', 'update', 'cleanup'].includes(key)) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) { warn(`${path}: invalid ${key}; using defaults`); continue; }
         for (const [name, setting] of Object.entries(item)) {
           if (key !== 'executors' && !Object.hasOwn(config[key], name)) warn(`${path}: unknown key ${key}.${name}`);
           if (key === 'executors' && setting && typeof setting === 'object') for (const field of Object.keys(setting)) {
-            if (!['cmd', 'profile', 'reviewArgs'].includes(field)) warn(`${path}: unknown key executors.${name}.${field}`);
+            if (!['cmd', 'profile', 'reviewArgs', 'idleMinutes'].includes(field)) warn(`${path}: unknown key executors.${name}.${field}`);
           }
           config[key][name] = key === 'executors' ? { ...config[key][name], ...setting } : setting;
         }
@@ -42,9 +45,12 @@ export function readConfig(cwd = process.cwd(), home = homedir(), warn = console
   }
   return { config, found };
 }
-export function resolveBuilder(config) {
-  const role = config.roles.builder;
+export function resolveBuilder(config, role = config.roles.builder) {
   if (role === 'host') return { note: 'builder is host: run this card in a clean host sub-agent or configure roles.builder' };
+  if (typeof role === 'string' && /^opencode:[^/]+\/.+$/.test(role)) {
+    const model = role.slice(9);
+    return { cmd: ['opencode', 'run', '--model', model], promptFile: true, profile: /gpt|codex|o[134]-/i.test(model) ? 'gpt' : /claude/i.test(model) ? 'claude' : 'generic' };
+  }
   if (typeof role === 'string' && role.startsWith('pi:')) {
     const match = role.match(/^pi:([^/]+)\/(.+):([^:]+)$/);
     if (match) return { cmd: ['pi', '--print', '--no-session', '--provider', match[1], '--model', match[2], '--thinking', match[3]], profile: /gpt|codex|o[134]-/i.test(match[2]) ? 'gpt' : /claude/i.test(match[2]) ? 'claude' : 'generic' };

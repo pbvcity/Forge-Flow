@@ -10,15 +10,27 @@ import { council } from './lib/council.mjs';
 import { runAll } from './lib/all.mjs';
 import { update } from './lib/update.mjs';
 import { archive } from './lib/archive.mjs';
+import { notify } from './lib/notify.mjs';
+import { protect } from './lib/protect.mjs';
+import { stop } from './lib/stop.mjs';
+import { wait } from './lib/wait.mjs';
+import { cleanup } from './lib/cleanup.mjs';
+import { followups } from './lib/followups.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const commands = {
   doctor,
   status,
+  followups,
+  stop,
+  wait,
   run: args => args.includes('--all') ? runAll(args, root) : runCard(args, root),
   update,
   archive,
+  cleanup,
+  notify,
+  protect,
   review: args => review(args, root),
   audit,
   council,

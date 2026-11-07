@@ -11,13 +11,15 @@ Otherwise, follow `../../playbook/default.md` (relative to this skill's director
 
 ## 1. Orient
 
-If `PLAN.md` or `.ff/` exists, read the plan and run:
+Read `PLAN.md` if present. If `PLAN.md`, `.ff/`, or `FOLLOWUPS.md` exists, run:
 
 ```
 node <this skill's directory>/../../cli/ff.mjs status
 ```
 
 If the tool is missing or fails, use `PLAN.md` and `git log` instead and continue. Pick up unfinished work rather than starting over when the request continues it.
+
+When `ff status` lists due follow-ups, handle them first unless the user asked for something else: gather the evidence yourself, report what it shows, and tick the item in `FOLLOWUPS.md`. Use `node <this skill's directory>/../../cli/ff.mjs followups` to list all open checks and malformed lines. Keep a check open when its evidence still needs a real external dependency.
 
 ## 2. Classify
 

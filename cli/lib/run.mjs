@@ -2,13 +2,14 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { readConfig, resolveBuilder } from './config.mjs';
+import { promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { acquireLock, releaseLock, atomicWrite, read, jsonFile } from './fsx.mjs';
 import { isAlive, runProcess, shellCommand, commandTemplate } from './proc.mjs';
 import { excludeGitEntries } from './git.mjs';
 import { readPlan, holdOn } from './plan.mjs';
+import { dueFollowupLines } from './followups.mjs';
 
-export const runExcludes = ['**/.ff/runs/', '**/.ff/run.lock', '**/.ff/reviews/'];
+export const runExcludes = ['**/.ff/runs/', '**/.ff/run.lock', '**/.ff/reviews/', '**/.ff/stop-request'];
 export const newId = () => `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
 
 const providerLimit = /\b429\b|rate.?limit|quota|usage limit|limit reached|too many requests|overloaded|at capacity|insufficient (?:balance|credit)/i;
@@ -56,11 +57,12 @@ function elapsed(since) {
 }
 
 export function status(cwd = process.cwd()) {
+  for (const line of dueFollowupLines(cwd)) console.log(line);
   const run = latestRun(cwd);
   const interrupted = run?.status === 'running' && isAlive(run.pid) === false;
   const live = run?.status === 'running' && !interrupted;
   let plan;
-  try { plan = readPlan(cwd, run?.plan); } catch {}
+  try { plan = readPlan(cwd, run?.plan, readConfig(cwd, undefined, () => {}).config); } catch {}
   if (!run) console.log('No runs recorded.');
   else {
     console.log(`Latest run: ${interrupted ? 'interrupted; ff run --all resumes it' : run.status}, started ${elapsed(run.startedAt)} ago${run.branch ? `, branch ${run.branch}` : ''}`);
@@ -100,16 +102,18 @@ export async function attempt({ builder, prompt, commands, cwd, dir, minutes, on
   write('prompt.md', input);
   const timeoutMs = minutes * 60000;
   const { command, args } = invocation(builder);
-  const worker = await runProcess(command, args, { cwd, input, timeoutMs, env: { ...process.env, FF_RESULT_FILE: reportFile }, onSpawn: onPid });
+  if (builder.promptFile) args.push(...promptFileArgs(cwd, join(dir, 'prompt.md')));
+  const worker = await runProcess(command, args, { cwd, input: builder.promptFile ? undefined : input, timeoutMs, idleMs: builder.idleMinutes * 60000, env: { ...process.env, FF_RESULT_FILE: reportFile }, onSpawn: onPid });
+  if (!worker.timedOut || worker.killedTree === true) onPid(undefined);
   write('output.txt', worker.stdout);
   write('stderr.txt', worker.stderr);
   const report = read(reportFile);
-  const result = { report, acceptance: [], durationMs: worker.durationMs, treeUnconfirmed: worker.timedOut && worker.killedTree !== true, pid: worker.pid };
+  const result = { report, idleTimedOut: worker.idleTimedOut, acceptance: [], durationMs: worker.durationMs, treeUnconfirmed: worker.timedOut && worker.killedTree !== true, pid: worker.pid };
   const blocked = (report || worker.stdout).match(/^\s*BLOCKED:\s*(.+)$/im)?.[1];
   if (worker.exitCode !== 0 || worker.timedOut || worker.error) {
     const said = `${worker.stderr}\n${worker.stdout.slice(-8192)}`;
     const limited = !worker.timedOut && !blocked && providerLimit.test(`${worker.stderr.slice(-2048)}\n${worker.stdout.slice(-500)}`);
-    return { ...result, status: blocked ? 'blocked' : 'failed', limited, note: blocked ?? worker.error ?? worker.reason ?? `executor exit ${worker.exitCode}`, evidence: said.slice(-6000) };
+    return { ...result, status: blocked && !worker.idleTimedOut ? 'blocked' : 'failed', limited, note: worker.idleTimedOut ? worker.reason : blocked ?? worker.error ?? worker.reason ?? `executor exit ${worker.exitCode}`, evidence: said.slice(-6000) };
   }
   if (blocked) return { ...result, status: 'blocked', note: blocked };
   if (!commands.length) return { ...result, status: 'unverified', note: 'no Accept commands' };

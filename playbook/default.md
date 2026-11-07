@@ -14,6 +14,10 @@ Defaults for working in someone's repository. Precedence: what the user says now
 
 Read the rest when you reach that stage: "Risk tiers" before starting, "Verification" before saying done, "Checks" before adding one, "Failures" when something fails, "Business decisions" when the request leaves one open, "Long tasks" for multi-step runs, "Work cards" before dispatching, `./review.md` for review. By subject: `./packs/` has ci-and-tests, frontend-visual, data-migration, payments, windows.
 
+## Follow-ups
+
+Keep later checks in the repository's `FOLLOWUPS.md`, one line per item: `- [ ] YYYY-MM-DD What to check. Evidence: <command or where to look>`. Use only open and ticked checkboxes. `ff status` shows due checks; `ff followups` lists all open checks, due first, and reports malformed lines. Dates use the local calendar day. Gather evidence yourself, report it, then tick the item. Due checks come first unless the user asked for something else. A configured SessionStart notification reminds once per repository per day; no hook is needed to use the commands.
+
 ## Talking to the user
 
 - To get a decision or send a reminder, write what it is, why now, the options, your recommendation, and what they do.
