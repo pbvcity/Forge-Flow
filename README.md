@@ -99,7 +99,7 @@ Set either channel or both. `ff notify --test` sends a test message. `FF_NOTIFY_
 | The prompt sits idle waiting for you | Yes | No | No |
 | A permission dialog in the main session needs you | Yes | No | No |
 
-Each turn sends at most one message, apart from permission dialogs, which each send one. Requests that are approved automatically, and those from sub-agents, send nothing. Text is cut short and known secret patterns are hidden. A failed send never affects the work. Codex runs plugin hooks only after you trust them once with `/hooks`.
+Each turn sends at most one message, apart from permission dialogs, which each send one. Only a session you are using sends anything: sub-agents, headless runs such as `claude -p` or `codex exec`, and processes ff starts stay silent, and so do requests approved automatically. Text is cut short and known secret patterns are hidden. A failed send never affects the work. Codex runs plugin hooks only after you trust them once with `/hooks`.
 
 ## Protect the main branch
 
@@ -110,6 +110,23 @@ ff protect
 Run it once in each repository. It installs a git `commit-msg` hook that refuses commits on `main`, `master`, and the origin default branch, in every worktree and from every tool. With a relative `core.hooksPath`, it covers only the worktree you ran it in, and it says so. Messages starting with `docs:` or `docs(`, and merge commits, still pass. `FF_ALLOW_MAIN=1 git commit ...` overrides it once.
 
 Add a branch with `--branch <name>`. `--status` shows the state, and `--remove` takes it out. A local hook is a safety net, and `--no-verify` skips it. For a rule nobody can skip, also turn on branch protection on your git host.
+
+## Project layout
+
+```
+ff init            # preview
+ff init --apply    # create what is missing
+```
+
+`init` sets up `docs/`, a `planning/` folder for plans, decisions, and follow-ups, and a git-ignored `temp/` sorted into `scripts/`, `logs/`, `scratch/`, `snapshots/`, and `backups/`. It appends a short "Files and folders" section to `AGENTS.md`, and keeps names a project already uses, such as `temp-ignore/`. Worktrees live beside the repository in `../<repo>-worktree/`.
+
+`ff docs` lists docs that may need an update for the files you changed. Mark a doc with `Covers: <glob>` near its top to link it to code.
+
+`ff wt new <slug>` creates a worktree from the latest main branch, and `ff wt clean` removes merged ones, squash merges included, after archiving ignored files.
+
+## Parallel runs
+
+`ff run --all --lanes 2` runs tasks with disjoint `Files:` in separate worktrees at once, merges them back one at a time, reruns their acceptance after each merge, and sends conflicts to a serial pass. `--dry-run --lanes 2` previews the grouping. Tasks without `Files:`, high-risk tasks, and tasks touching repository-wide files run serially.
 
 ## Cleanup
 

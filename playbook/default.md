@@ -131,6 +131,7 @@ Record each one in `DECISIONS.md` at the repository root when you make it:
 - Write the exit condition first as a predicate a command or observer can decide. A plateau is not a stop. Never relax the predicate to declare victory. If it proves wrong, keep it visible and report that.
 - On resume, read `PLAN.md`, `ff status`, git log, open PRs, and worktrees before starting anything. "Pending" in a summary is a lead, not a fact.
 - A task is done when its process has exited and someone other than the executor reran acceptance.
+- For unattended plans, `ff run --all --lanes 2` runs independent tasks in parallel worktrees and merges them itself; `--dry-run --lanes 2` shows the grouping first. By hand, create worktrees with `ff wt new <slug>` under `../<repo>-worktree/`, and remove them with `ff wt clean` once merged.
 - Run in parallel only when write sets, ports, and databases are disjoint. If you cannot show that, run serially. One worktree per line, branched from the latest main.
 - Keep each slice to about an hour. Wait on process exit, not on polling.
 - Cap by design any model input that grows with data: summarize deterministically and state what was omitted.

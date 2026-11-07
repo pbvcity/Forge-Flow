@@ -1,11 +1,21 @@
 import { runProcess } from './proc.mjs';
 import { readFileSync, appendFileSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { AsyncLocalStorage } from 'node:async_hooks';
+const lanePhase = new AsyncLocalStorage();
+export const withLaneGit = action => lanePhase.run(true, action);
 export function projectGitEnv(source = process.env) {
   return Object.fromEntries(Object.entries(source).filter(([key]) => !/^GIT_(DIR|WORK_TREE|IMPLICIT_WORK_TREE|INDEX_FILE|COMMON_DIR|PREFIX|INTERNAL_SUPER_PREFIX|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|GRAFT_FILE|SHALLOW_FILE|NO_REPLACE_OBJECTS|REPLACE_REF_BASE|CONFIG|CONFIG_PARAMETERS|CONFIG_COUNT|CONFIG_KEY_\d+|CONFIG_VALUE_\d+)$/i.test(key)));
 }
-export function git(cwd, args, options = {}) {
-  return runProcess('git', args, { timeoutMs: 10000, ...options, cwd, env: projectGitEnv(options.env) });
+export async function git(cwd, args, options = {}) {
+  const lane = lanePhase.getStore();
+  const invoke = () => runProcess('git', lane ? ['-c', 'gc.auto=0', ...args] : args, { timeoutMs: 10000, ...options, cwd, env: projectGitEnv(options.env) });
+  const result = await invoke();
+  if (lane && result.exitCode !== 0 && !result.timedOut && /\.lock\b/i.test(`${result.stderr}\n${result.error ?? ''}`)) {
+    await new Promise(done => setTimeout(done, 100));
+    return invoke();
+  }
+  return result;
 }
 
 export async function excludeGitEntries(cwd, entries) {

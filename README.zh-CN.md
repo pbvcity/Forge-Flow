@@ -101,7 +101,7 @@ FF_NOTIFY_LANG=zh
 | 输入框空闲，等你回应 | 是 | 否 | 否 |
 | 主会话弹出权限请求，需要你批准 | 是 | 否 | 否 |
 
-每轮最多发一条，权限弹窗除外，每个弹窗发一条。自动批准的请求和子代理的请求不发。消息会截短，已知的密钥格式会被隐藏。发送失败不影响工作。Codex 要先用 `/hooks` 信任一次插件的钩子才会运行。
+每轮最多发一条，权限弹窗除外，每个弹窗发一条。只有你正在使用的交互会话会发：子代理、`claude -p` 或 `codex exec` 这类无界面运行、ff 启动的进程都不发，自动批准的请求也不发。消息会截短，已知的密钥格式会被隐藏。发送失败不影响工作。Codex 要先用 `/hooks` 信任一次插件的钩子才会运行。
 
 ## 保护主分支
 
@@ -112,6 +112,23 @@ ff protect
 每个仓库运行一次。它安装一个 git `commit-msg` 钩子，拒绝在 `main`、`master` 和 origin 默认分支上提交，对所有工作树和所有工具都生效。如果 `core.hooksPath` 是相对路径，它只覆盖当前工作树，并会明确提示。以 `docs:` 或 `docs(` 开头的提交和合并提交仍可通过。`FF_ALLOW_MAIN=1 git commit ...` 可放行一次。
 
 用 `--branch <名称>` 增加分支，`--status` 查看状态，`--remove` 移除。本地钩子只是兜底，`--no-verify` 可以跳过。要做到谁都跳不过，请在代码托管平台上再开分支保护。
+
+## 项目目录
+
+```
+ff init            # 预览
+ff init --apply    # 创建缺少的部分
+```
+
+`init` 会建好 `docs/`、存放计划、待定事项和跟进事项的 `planning/`，以及被 git 忽略的 `temp/`，里面按 `scripts/`、`logs/`、`scratch/`、`snapshots/`、`backups/` 分类。它会在 `AGENTS.md` 末尾加一节简短的「Files and folders」，并沿用项目已有的命名，比如 `temp-ignore/`。worktree 放在仓库旁边的 `../<仓库名>-worktree/`。
+
+`ff docs` 会根据改动的文件列出可能需要更新的文档。在文档开头写 `Covers: <通配符>` 就能把它和代码关联起来。
+
+`ff wt new <名称>` 从最新主分支创建 worktree，`ff wt clean` 在归档被忽略的文件后删除已合并的 worktree，包括 squash 合并的。
+
+## 并行运行
+
+`ff run --all --lanes 2` 让 `Files:` 互不相交的任务在各自的 worktree 里同时运行，逐个合并回来，每次合并后重跑验收，有冲突的任务转到最后串行处理。`--dry-run --lanes 2` 可以先预览分组。没写 `Files:` 的任务、高风险任务和改动仓库级文件的任务会串行运行。
 
 ## 清理
 

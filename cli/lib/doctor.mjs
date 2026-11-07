@@ -4,6 +4,7 @@ import { invocation } from './run.mjs';
 import { updateStatus } from './update.mjs';
 import { notifyChannels, notifySettings } from './notify.mjs';
 import { protectionState } from './protect.mjs';
+import { initState } from './init.mjs';
 
 export function modelFamily(model, vendor) {
   if (/gpt|codex|^o[134](?:-|$)/i.test(model)) return 'openai';
@@ -56,6 +57,9 @@ export async function doctor(cwd = process.cwd()) {
   }
   const { config, found } = readConfig(cwd);
   console.log(`Config: ${found.length ? found.join(', ') : 'not found (defaults)'}`);
+  const layout = await initState(cwd, config);
+  console.log(`Files and folders: ${layout.hasBlock ? 'present' : 'missing'} (${layout.rules})`);
+  console.log(`Temp folder: ${layout.temp}/ (${layout.tempIgnored ? 'ignored' : 'not ignored'})`);
   console.log(`Model families: ${families.size} (inferred from CLI/model names; availability is not authentication)`);
   await updateStatus(cwd, config);
   console.log(`Notifications: ${notifyChannels(notifySettings()).join(', ') || 'off'}`);

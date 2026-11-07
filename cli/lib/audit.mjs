@@ -1,4 +1,5 @@
 import { diffOptions, readDiff, diffFiles } from './diff.mjs';
+import { docsHints } from './docs.mjs';
 
 const assertion = /\b(?:assert(?:\s*\(|\.[\w]+\s*\()|expect\s*\(|self\.assert\w*\s*\(|pytest\.raises\s*\()|^\s*assert\s+\S/;
 const skipped = /\b(?:test|it|describe)\s*\.\s*skip\b|@(?:pytest\.mark\.skip\w*|unittest\.skip\w*)\b/;
@@ -41,5 +42,10 @@ export async function audit(args, cwd = process.cwd()) {
     console.log(hints.length ? hints.join('\n') : '  none');
   }
   if (result.weakened) console.log('\nTests weakened: assertion deleted or test skipped without a replacement assertion in the same file.');
+  try {
+    const hints = await docsHints(cwd, diffOptions(args).base);
+    for (const line of hints.updates) console.log(line);
+    for (const diagnostic of hints.diagnostics) console.error(diagnostic);
+  } catch (error) { console.error(`Docs unavailable: ${error.message}`); }
   return result.weakened ? 1 : 0;
 }

@@ -16,6 +16,8 @@ function acceptLine(task, text) {
 function readField(task, name, value) {
   if (name === 'accept') { acceptLine(task, value); return; }
   task.details.push(`${name}: ${value}`);
+  if (name === 'files') task.files.push(...value.replace(/`/g, '').split(/[,\s]+/).filter(Boolean));
+  if (name === 'shared') task.shared.push(...value.replace(/`/g, '').split(',').map(item => item.trim()).filter(Boolean));
   if (name === 'executor') task.executor = unquote(value);
   if (name === 'risk') task.risk = value.match(/\w+/)?.[0].toLowerCase();
   if (name === 'depends' && !/^(?:none|no|-)?\s*$/i.test(value.replace(/`/g, ''))) {
@@ -50,7 +52,7 @@ export function parsePlan(text, config) {
     if (section !== 'tasks') continue;
     const match = line.match(/^(\s*[-*+]\s+\[)([ xX])(\]\s+)(T\d\w*(?:[.-]\w+)*)\s*[:.)-]?\s+(.+?)\s*$/i);
     if (match) {
-      current = { id: match[4].toUpperCase(), title: match[5], done: match[2].toLowerCase() === 'x', line: index, body: [], details: [], accept: [], depends: [] };
+      current = { id: match[4].toUpperCase(), title: match[5], done: match[2].toLowerCase() === 'x', line: index, body: [], details: [], accept: [], depends: [], files: [], shared: [] };
       field = '';
       tasks.push(current);
       continue;
@@ -58,7 +60,7 @@ export function parsePlan(text, config) {
     if (/^\s*[-*+]\s+\[/.test(line)) { notes.push(`Skipped unparseable task at line ${index + 1}: ${line.trim()}`); current = null; continue; }
     if (!current) continue;
     current.body.push(line);
-    const named = line.match(/^\s*(Accept|Depends|Files|Risk|Executor):\s*(.*)$/i);
+    const named = line.match(/^\s*(Accept|Depends|Files|Shared|Risk|Executor):\s*(.*)$/i);
     if (named) { field = named[1].toLowerCase(); readField(current, field, named[2]); continue; }
     if (field === 'accept' && line.trim()) { acceptLine(current, line); continue; }
     current.details.push(line);
@@ -78,7 +80,9 @@ export function parsePlan(text, config) {
     task.signature = createHash('sha256').update(JSON.stringify([task.id, task.title, task.body.map(line => line.trim()).join('\n').trim()])).digest('hex');
   }
   const exit = lines.find(line => /^\s*Exit condition:/i.test(line))?.replace(/^\s*Exit condition:\s*/i, '').trim() ?? '';
-  const risk = lines.find(line => /^\s*Risk:/i.test(line))?.match(/^\s*Risk:\s*(\w+)/i)?.[1].toLowerCase();
+  const tasksHeading = lines.findIndex(line => /^#{1,6}\s+Tasks\s*$/i.test(line));
+  const header = tasksHeading < 0 ? lines : lines.slice(0, tasksHeading);
+  const risk = header.find(line => /^\s*Risk:/i.test(line))?.match(/^\s*Risk:\s*(\w+)/i)?.[1].toLowerCase();
   const goal = lines.find(line => /^#\s/.test(line))?.replace(/^#\s+/, '') ?? '';
   const outcome = lines.find(line => /^\s*Outcome:/i.test(line))?.replace(/^\s*Outcome:\s*/i, '').trim() ?? '';
   return { text, lines, tasks: usable, notes, holds, goal, outcome, risk, exit, exitCommand: exit.match(/^`([^`]+)`/)?.[1] ?? '' };

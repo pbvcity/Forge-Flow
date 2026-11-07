@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { relative, join } from 'node:path';
+
+import { tempDir } from './paths.mjs';
 
 export const builtInExecutors = {
   claude: { cmd: 'claude -p --permission-mode acceptEdits --allowedTools Read,Edit,Write,Bash', profile: 'claude' },
@@ -11,11 +13,12 @@ export const promptFileArgs = (cwd, file) => ['Read the entire attached prompt f
 
 export function configDefaults(home = homedir()) {
   return {
+    paths: { planning: 'planning', temp: 'temp', worktrees: '' },
     roles: { builder: 'host', reviewer: 'host', second: '', fallback: '' },
     executors: { ...builtInExecutors },
     review: { panel: [] },
     cleanup: { keep: 20, days: 30 },
-    run: { limitWaitMinutes: [5, 15, 30, 60, 60, 60, 60, 60, 60, 60] },
+    run: { limitWaitMinutes: [5, 15, 30, 60, 60, 60, 60, 60, 60, 60], maxLanes: 2, laneSetup: '', laneCopy: [] },
     playbook: join(home, '.ff/my-rules.md'),
     update: { repo: 'https://github.com/pbvcity/Forge-Flow.git', timeoutMs: 180000 },
   };
@@ -23,6 +26,7 @@ export function configDefaults(home = homedir()) {
 
 export function readConfig(cwd = process.cwd(), home = homedir(), warn = console.error) {
   const config = configDefaults(home);
+  config.paths.temp = relative(cwd, tempDir(cwd));
   const found = [];
   for (const path of [join(home, '.ff/config.json'), join(cwd, '.ff/config.json')]) {
     let value;
@@ -31,7 +35,7 @@ export function readConfig(cwd = process.cwd(), home = homedir(), warn = console
     if (!value || typeof value !== 'object' || Array.isArray(value)) { warn(`${path}: expected an object; using defaults`); continue; }
     for (const [key, item] of Object.entries(value)) {
       if (!Object.hasOwn(config, key)) warn(`${path}: unknown key ${key}`);
-      if (['roles', 'executors', 'review', 'run', 'update', 'cleanup'].includes(key)) {
+      if (['roles', 'executors', 'review', 'run', 'update', 'cleanup', 'paths'].includes(key)) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) { warn(`${path}: invalid ${key}; using defaults`); continue; }
         for (const [name, setting] of Object.entries(item)) {
           if (key !== 'executors' && !Object.hasOwn(config[key], name)) warn(`${path}: unknown key ${key}.${name}`);

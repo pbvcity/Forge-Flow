@@ -4,6 +4,7 @@ Requires Node 22 or newer. No runtime dependencies. Commands use the current wor
 
 ```
 node cli/ff.mjs doctor
+node cli/ff.mjs init
 node cli/ff.mjs status
 node cli/ff.mjs followups
 node cli/ff.mjs run card.md
@@ -11,8 +12,10 @@ node cli/ff.mjs run --all
 node cli/ff.mjs wait
 node cli/ff.mjs archive
 node cli/ff.mjs cleanup
+node cli/ff.mjs wt list
 node cli/ff.mjs review --base main --risk contract
 node cli/ff.mjs audit --base HEAD
+node cli/ff.mjs docs
 node cli/ff.mjs council question.md
 node cli/ff.mjs update --check
 ```
@@ -28,6 +31,7 @@ node cli/ff.mjs update --check
     "mine": { "cmd": "mytool --headless", "profile": "generic", "reviewArgs": ["--read-only"] }
   },
   "review": { "panel": [] },
+  "paths": { "planning": "planning", "temp": "temp", "worktrees": "" },
   "cleanup": { "keep": 20, "days": 30 },
   "run": { "limitWaitMinutes": [5, 15, 30, 60, 60, 60, 60, 60, 60, 60] },
   "playbook": "~/.ff/my-rules.md"
@@ -42,6 +46,22 @@ node cli/ff.mjs update --check
 
 OpenCode builders and reviewers receive a stored prompt through `--file`, with `--dir` set to the project root, and no stdin prompt. `doctor` lists `opencode models` and infers their families from model names before falling back to providers. Reviews use a process-local `ff-review` agent via `OPENCODE_CONFIG_CONTENT`, allowing only read, grep, glob, and list. This uses the OpenCode V1 config format and replaces any inherited inline config for that reviewer, without writing user configuration. No agent installation is required; an unavailable agent is reported as failed and its verdict discarded. Builders retain their configured permissions. See [setup](../skills/setup/SKILL.md).
 
+Paths are relative to the working directory unless absolute. When `paths.temp` is unset, the first existing `temp`, `temp-ignore`, or `tmp` is used, otherwise `temp`. Empty `paths.worktrees` resolves to `../<main repository name>-worktree`, shared by linked worktrees.
+
+`status [--plan <path>]` shows the selected plan and latest run. Plans use an explicit `--plan` first, then root `PLAN.md` if present, then `<planning>/PLAN.md`. Decisions and follow-ups prefer `<planning>/DECISIONS.md` and `<planning>/FOLLOWUPS.md`, fall back to existing root files, and use the planning folder for new files.
+
+## Init
+
+`init [--apply]` previews repository setup without writing files. With `--apply`, it creates `docs/`, the configured planning folder, and the detected or configured temp folder with `scripts/`, `logs/`, `scratch/`, `snapshots/`, `backups/`, and `worktree-archive/`. It creates no placeholder files.
+
+It appends a temp ignore entry only when `git check-ignore` says one is needed, preserving existing lines and negations, and ensures ff runtime exclusions in the common git directory. It appends a `Files and folders` block to existing `AGENTS.md`, otherwise existing `CLAUDE.md`, otherwise a new `AGENTS.md`. An existing block is left alone; no second rules file is created. Repeated runs preserve existing content. `doctor` reports whether the block is present and the temp folder is ignored.
+
+## Docs
+
+`docs [--base <ref>]` lists documentation that may need updating, without editing files. The default base is the merge base with the origin default branch, or `HEAD~1` without a remote. It includes tracked changes and non-ignored untracked files.
+
+Add `Covers: cli/**, scripts/*.mjs` within the first 20 lines of a Markdown file under `docs/`. Multiple lines are supported; root-relative globs accept `*`, `**`, and `?`. An unchanged covering doc is printed as `update?  <doc>  for <file>`. Uncovered non-doc paths are counted, with up to 20 listed. Without coverage declarations, changed paths are grouped by top-level folder. Errors are diagnostic only: exit status is always 0. `audit` appends the same update hints without changing its exit status.
+
 ## One card
 
 `run <card file> [--timeout-min <n>] [--force]` starts the builder once and then runs the card's `Accept:` commands itself. `Accept: <command>` works on each line, as does one command per line under a bare `Accept:`. Results are in `.ff/runs/<id>/`. Exit 0 means acceptance passed, or the card had none and the run is `unverified`.
@@ -50,11 +70,17 @@ OpenCode builders and reviewers receive a stored prompt through `--file`, with `
 
 `wait [--timeout-min <n>]` waits for the latest run selected at startup, polling its record and controller about every 5 seconds. There is no timeout by default. It prints the final status and summary path. Exit 0 means complete (`done`), 1 means any other ending, a dead controller, or no run, and 3 means timeout. A timeout does not stop the run. Use it as a host background task to wake the session for closing; without host background tasks, use `status` in a later session.
 
-`run --all [--plan <path>] [--timeout-min <n>] [--foreground] [--force] [--dry-run]` runs a plan in the background. The format is in `skills/plan/SKILL.md`. `status` shows where it is, and it needs no host timer.
+`run --all [--plan <path>] [--only <T1,T2>] [--timeout-min <n>] [--foreground] [--force] [--dry-run]` runs a plan in the background. The format is in `skills/plan/SKILL.md`. `status` shows where it is, and it needs no host timer.
 
 `run --all --dry-run` previews the current plan: completed tasks, tasks that would run now, and held tasks with their open direction choice, unmet dependencies, or need for a person. Dependencies count as met only when already ticked; the preview does not assume future success. It supports `--plan`, starts no child processes, and writes no run state, locks, branches, or worktrees. No headless builder is required. A successful preview exits 0 even when tasks are held; it does not verify executor availability or run acceptance commands.
 
 Tasks run one at a time in a clean process. PLAN.md is reread before each one, so editing it changes course.
+
+`--only T1,T2` runs and reports only the named tasks. Dependencies are still checked against the full plan; omitted prerequisites are not run automatically. Lead replanning is disabled so it cannot introduce tasks outside the selection. Acceptance, retries, review, and the plan exit condition keep their usual behavior.
+
+`run --all --dry-run --lanes <n>` also previews up to `n` lanes and a serial tail with reasons. Tasks can declare `Files: src/a/**, lib/b.mjs` (commas or spaces, optional backticks) and `Shared: database, port:3000` (comma-separated resource names). Open tasks connected by dependencies, overlapping static file/glob prefixes, or the same shared resource stay together. File comparisons ignore case on Windows. Tasks with no files, high risk, or repository-wide files (root files, manifests, lock files, the plan, or decisions) and tasks connected to them stay in the serial tail.
+
+`run --all --lanes <n>` runs those lanes in separate worktrees with detached child controllers. `run.maxLanes` defaults to 2, with a hard cap of 3. Optional `run.laneSetup` runs a command in each new tree; `run.laneCopy` copies exact relative file paths from the parent. Setup failures go to the serial tail. The parent merges finished lanes one at a time, reruns acceptance, and sends conflicts or integration failures to the serial tail. Clean merged trees are removed, with run evidence archived under the parent run's `lanes/<letter>/runs/`. The summary includes attempts, duration, merge results, and writes outside declared files. `status` lists each lane and its child status. `stop` forwards requests and waits without merging further; children stop their own executors. After a parent crash, repeat `run --all --lanes <n>` to adopt existing children and merge completed lanes without starting duplicate workers; the plan is also re-checked against its snapshot, so a tick left by a process that outlived the parent is undone. A plain `run --all` on such an interrupted run is refused with a pointer to `--lanes` (`--force` runs serially instead). Otherwise, execution without `--lanes` remains serial.
 
 An optional `Executor: codex` (or another configured executor name or `pi:` role) on a task overrides the run's builder. Unknown executors produce a plan note and hold that task, including in dry runs. `roles.fallback` defaults to empty. When set, it runs second attempts only; after a provider limit on a different executor, it becomes the run's default builder. Explicit task overrides still apply. Further limits on the fallback use the wait schedule. Worker prompts use the selected executor's profile, and task reports and summaries name it. `doctor` shows the fallback setting.
 
@@ -75,7 +101,7 @@ If the controller dies, `run --all` resumes from the last commit: the plan is ch
 
 ## Follow-ups
 
-Keep later checks in `FOLLOWUPS.md` in the working directory, one item per line:
+Keep later checks in `<planning>/FOLLOWUPS.md` (existing root `FOLLOWUPS.md` remains supported), one item per line:
 
 ```markdown
 - [ ] 2026-11-14 Check refund failures since the release. Evidence: `<command>` or where to look.
@@ -97,9 +123,9 @@ When notifications are configured, the shared `SessionStart` hook checks the ses
 
 ## Archive
 
-`archive [--plan <path>] [--force]` moves `PLAN.md` into `plans/done/PLAN-YYYY-MM-DD.md`, creating the directory. The date is UTC. Existing archives are preserved by adding `-2`, `-3`, and so on before `.md`.
+`archive [--plan <path>] [--force]` moves `PLAN.md` into `<planning>/done/PLAN-YYYY-MM-DD.md`, creating the directory. The date is UTC. Existing archives are preserved by adding `-2`, `-3`, and so on before `.md`.
 
-Unticked tasks in the plan's `Tasks` section prevent archiving, with a message explaining `--force`. Task parsing uses the same plan format as `run --all`. `--force` archives unfinished plans too. `--plan <path>` selects another plan, relative to the current working directory or absolute; the destination remains the current worktree's `plans/done/`.
+Unticked tasks in the plan's `Tasks` section prevent archiving, with a message explaining `--force`. Task parsing uses the same plan format as `run --all`. `--force` archives unfinished plans too. `--plan <path>` selects another plan, relative to the current working directory or absolute; the destination remains the current worktree's `<planning>/done/`.
 
 ## Cleanup
 
@@ -107,7 +133,17 @@ Unticked tasks in the plan's `Tasks` section prevent archiving, with a message e
 
 Live runs and surviving executors are preserved. Names containing `backup`, `bak`, or `备份`, including nested names, protect the whole entry. Linked entries and linked cleanup directories are skipped with diagnostics; paths outside the three directories are never deleted. A failed item does not stop other items.
 
-Local `ff/*` branches merged into the origin default branch (falling back to local `main`, then `master`) are listed and deleted with `git branch -d` only with `--apply`. Unmerged branches, including `ff/failed/*`, are listed and kept. If the default branch cannot be identified, branches are kept. Git may also refuse to delete a checked-out branch or one not merged into its upstream/current branch; that refusal is printed.
+Local `ff/*` branches use the same merged proof as `wt clean` below, including squash merges. With `--apply`, checked-out branches are kept and other proven branches are deleted with `git update-ref -d` against the proven tip, so a changed tip is not deleted. Unproven branches, including `ff/failed/*`, are listed and kept.
+
+## Worktrees
+
+`wt new <slug> [--from <ref>]` fetches configured remotes, then creates `<worktreeRoot>/<slug>` on a new branch named `<slug>`. It starts from the origin default branch, falling back to local `main` or `master`, or the explicit `--from` ref. An existing path or branch is refused. The new path is printed. `paths.worktrees` controls the root; the default is shared across linked worktrees.
+
+`wt list` lists every worktree with its branch, head, dirty/clean state and merged proof. `*` marks paths under the configured worktree root.
+
+`wt clean [--apply]` previews by default. It only removes worktrees under that root, excluding the main and current worktrees. Tracked changes, non-ignored untracked files, and live processes in `.ff/runs/**/run.json` keep a worktree. A merged PR with an exact matching head SHA proves a squash merge; otherwise ancestry against the origin default (or local default) proves a merge. Without a remote, identical trees also count. Missing or failed `gh` queries are reported and Git proofs still run.
+
+Before removal, ignored files move to `<temp>/worktree-archive/<slug>/`, preserving relative paths. Backup names (`backup`, `bak`, `备份`), secrets (`.env`, `.env.*`, `*.pem`, `*.key`, `credentials*`), linked paths and archive collisions are listed and left in place, keeping that worktree. Removal uses `git worktree remove` without force, deletes the branch only at the proven tip, then prunes worktree metadata. Each kept worktree has a reason; a failed item does not stop the others.
 
 ## Review
 

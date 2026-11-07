@@ -36,7 +36,8 @@ Not doing: <what is out of scope, and optional items left out>
 
 - [ ] T1 <outcome of this task>
   Accept: `<runnable command>`
-  Files: <main files>
+  Files: <every path or glob this task writes>
+  Shared: <port, database, or service it needs alone, if any>
   Depends: <task IDs, or none>
   Risk: <tier, when it differs from the plan>
   Executor: <optional executor name or pi:vendor/model:effort>
@@ -56,6 +57,8 @@ Omit `Executor:` to use `roles.builder`. A task's `Executor:` overrides that def
 
 - Each task has at least one `Accept:` command that exits non-zero on failure. Run it now if it can run, so you know it is well formed.
 - If only a person can accept something (real device, real money, a look at the page), put it under "Needs a person" with exact steps.
+- `Files:` decides what can run in parallel, so list every path the task writes. A task without `Files:`, a high-risk task, or one touching repository-wide files such as `package.json` runs serially. `Shared:` names a port, database, or service that two tasks cannot use at once.
+- Put the plan in the planning folder, `planning/PLAN.md` by default, or `planning/<topic>/PLAN.md` for several at once, run with `--plan`. An existing root `PLAN.md` still works.
 - Keep tasks to about 30 minutes each, since a process is stopped at 60. Split where write sets separate, and mark real dependencies only, so tasks can run independently.
 - High tier: add tasks for real-environment acceptance, the kill switch or rollback, and the before/after comparison.
 - Follow "Business decisions" in the playbook: choose details yourself, including prices and permissions. Only direction choices wait for an answer, and a ticked one no longer holds its tasks.

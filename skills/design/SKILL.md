@@ -28,11 +28,15 @@ Answer in a sentence each: who is this for, what should they feel, and what is t
 
 ## 3. Offer directions
 
-When the look is open, as with a new product, a brand, or a large redesign, give two or three directions that really differ. Each has:
+When the look is open, as with a new product, a brand, or a large redesign, give two or three directions that really differ.
+
+Before proposing, open references: at least two per direction, with your browser or web fetch tool, following `references/references.md`. Writing directions from memory is what makes every product look the same. Only when no tool can load a page, write `references not opened` with the error. Then use `references/styles.md` so the directions differ on at least two axes. Each direction has:
 
 - The idea in one sentence, and who it suits.
 - What it gives up.
-- References you opened and checked. Say so if you have none. Never invent a link, a screenshot, or a source.
+- References you opened, and what you took from each. Say so if you have none. Never invent a link, a screenshot, or a source.
+
+For a large redesign, render each direction as one static screen, such as a single HTML page, and show the screenshots side by side. People choose far better from a picture than from a paragraph. The samples help the choice and are not the build.
 
 Recommend one. A direction is a choice that can waste much of the work, so ask before building. If the user is away, take your recommendation, record it in `DECISIONS.md`, and carry on: a look can be changed in development, and it is confirmed before going live.
 
@@ -46,13 +50,14 @@ One page, kept next to the plan. Leave out what does not apply.
 # <surface>
 
 Intent: <who, feeling, the one job>
-Direction: <chosen, and why the others lost>
+Target: <what this must beat, such as a named reference or the current page, and what would count as not good enough>
+Direction: <chosen, and why the others lost; for a mix, which leads and what each adds>
 Tokens: <color, type, spacing, radius; names from the project where they exist>
 Layout: <grid, widths, what collapses on a phone>
 States: <empty, loading, error, long text>
 Motion: <personality; element class -> recipe>
 Icons: <one family, its license>
-References: <links you checked, and what you took from each>
+References: <links you opened, the date, what you took from each, and a license note when reusing code, fonts, images, or icons>
 Not doing: <what was left out>
 ```
 
@@ -70,7 +75,7 @@ Read `references/motion.md` when anything moves, and `references/atomic-motion.m
 
 ## 7. Build and see it
 
-Build shared parts first, then screens. Then follow the frontend pack: look at the real render, on every changed page, at desktop and phone widths.
+Build shared parts first, then screens. Then follow the frontend pack: look at the real render, on every changed page, at desktop and phone widths, and judge it as its "Judge the look" section says.
 
 Motion cannot be judged from a screenshot, the DOM, or a keyframe. Record a few seconds or capture a frame sequence, and check it against the rubric in `references/motion.md`. If you cannot, write `motion not seen` in the report.
 

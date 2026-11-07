@@ -13,7 +13,7 @@ export default function notifications(pi) {
     const settings = notifySettings();
     const elapsed = Date.now() - started;
     started = 0;
-    if (event.aborted || !notifyChannels(settings).length) return;
+    if (event.aborted || ctx.mode !== 'tui' || !notifyChannels(settings).length) return;
     if (!failed && elapsed < settings.minMinutes * 60000) return;
     await sendNotice({ event: failed ? 'failed' : 'done', project: basename(ctx.cwd), detail: failed }, { settings }).catch(() => {});
   });

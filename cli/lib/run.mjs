@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { acquireLock, releaseLock, atomicWrite, read, jsonFile } from './fsx.mjs';
@@ -8,6 +8,8 @@ import { isAlive, runProcess, shellCommand, commandTemplate } from './proc.mjs';
 import { excludeGitEntries } from './git.mjs';
 import { readPlan, holdOn } from './plan.mjs';
 import { dueFollowupLines } from './followups.mjs';
+import { planPath, planningFile } from './paths.mjs';
+import { laneRecord } from './lanes.mjs';
 
 export const runExcludes = ['**/.ff/runs/', '**/.ff/run.lock', '**/.ff/reviews/', '**/.ff/stop-request'];
 export const newId = () => `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
@@ -41,8 +43,8 @@ export function latestRun(cwd) {
 export const runIsLive = run => run?.status === 'running' && isAlive(run.pid) !== false;
 export const executorIsLive = run => Boolean(run?.executorPid) && isAlive(run.executorPid) === true;
 
-export function openDecisions(cwd) {
-  return read(join(cwd, 'DECISIONS.md')).split(/\r?\n/).flatMap(line => line.match(/^\s*-\s+\[ \]\s+(.+)/)?.[1].trim() ?? []);
+export function openDecisions(cwd, config = readConfig(cwd, undefined, () => {}).config) {
+  return read(planningFile(cwd, config, 'DECISIONS.md')).split(/\r?\n/).flatMap(line => line.match(/^\s*-\s+\[ \]\s+(.+)/)?.[1].trim() ?? []);
 }
 
 export function decisionLines(cwd) {
@@ -56,18 +58,30 @@ function elapsed(since) {
   return minutes < 1 ? 'under a minute' : `${minutes} min`;
 }
 
-export function status(cwd = process.cwd()) {
+export function status(cwd = process.cwd(), args = []) {
+  let explicit;
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] !== '--plan') throw new Error(`Unknown status option: ${args[i]}`);
+    explicit = args[++i];
+    if (!explicit || explicit.startsWith('--')) throw new Error('--plan needs a path');
+  }
   for (const line of dueFollowupLines(cwd)) console.log(line);
   const run = latestRun(cwd);
   const interrupted = run?.status === 'running' && isAlive(run.pid) === false;
   const live = run?.status === 'running' && !interrupted;
+  const { config } = readConfig(cwd, undefined, () => {});
   let plan;
-  try { plan = readPlan(cwd, run?.plan, readConfig(cwd, undefined, () => {}).config); } catch {}
+  try { plan = readPlan(cwd, planPath(cwd, config, explicit ?? run?.plan), config); } catch {}
   if (!run) console.log('No runs recorded.');
   else {
-    console.log(`Latest run: ${interrupted ? 'interrupted; ff run --all resumes it' : run.status}, started ${elapsed(run.startedAt)} ago${run.branch ? `, branch ${run.branch}` : ''}`);
+    const resume = run.lanes?.length ? `ff run --all --lanes ${run.lanes.length} resumes it` : 'ff run --all resumes it';
+    console.log(`Latest run: ${interrupted ? `interrupted; ${resume}` : run.status}, started ${elapsed(run.startedAt)} ago${run.branch ? `, branch ${run.branch}` : ''}`);
     if (live && run.current) console.log(`Now: ${run.current}, for ${elapsed(run.currentSince ?? run.startedAt)}`);
     if (run.note) console.log(run.note);
+    for (const lane of run.lanes ?? []) {
+      const child = lane.path ? laneRecord(lane) : null;
+      console.log(`Lane ${lane.letter}: ${lane.tasks.join(', ')} — ${child?.status || lane.status}${child?.current ? ` (${child.current})` : ''}; ${lane.path ?? 'pending'}${lane.merged ? '; merged' : ''}`);
+    }
   }
   const states = (plan?.tasks ?? []).map(task => {
     const saved = run?.tasks?.[task.id], hold = holdOn(plan, task);
@@ -88,7 +102,9 @@ export function status(cwd = process.cwd()) {
 export function workerPrompt(card, builder, root, cwd, config) {
   const profile = ['generic', 'gpt', 'claude'].includes(builder.profile) ? builder.profile : 'generic';
   const own = read(resolve(cwd, config.playbook.replace(/^~(?=[/\\]|$)/, () => homedir())));
-  return [card, read(join(root, 'playbook/executors', `${profile}.md`)), own].filter(Boolean).join('\n\n');
+  const profileText = read(join(root, 'playbook/executors', `${profile}.md`))
+    .replaceAll('`DECISIONS.md`', '`' + relative(cwd, planningFile(cwd, config, 'DECISIONS.md')) + '`');
+  return [card, profileText, own].filter(Boolean).join('\n\n');
 }
 
 export const invocation = builder => Array.isArray(builder.cmd) ? { command: builder.cmd[0], args: builder.cmd.slice(1) } : commandTemplate(builder.cmd);

@@ -61,12 +61,16 @@ Write `~/.ff/config.json`. A project may override it in `.ff/config.json`. If th
 
 Create `~/.ff/my-rules.md` only if the user has rules to add. Do not overwrite one.
 
-## 5. Offer notifications and branch protection
+## 5. Prepare the repository
+
+Run `node <this skill's directory>/../../cli/ff.mjs init` to preview the folders, ignore lines, and rules-file block it would add, then `init --apply` if they fit. It only adds what is missing, keeps existing names such as `temp-ignore/`, and never rewrites a rules file.
+
+## 6. Offer notifications and branch protection
 
 If the user wants to hear when long work ends, show them the settings in the README's "Notifications" section. They fill in `~/.ff/notify.env` themselves, because it holds credentials. Then run `ff notify --test`.
 
 If this repository should not take direct commits on its main branch, run `ff protect` here. It applies to one repository, so run it in each one that needs it.
 
-## 6. Report
+## 7. Report
 
 List the tools found, the role assignment, and any downgrade. Mention that third-party marketplaces may not auto-update, so the `update` skill exists for that.

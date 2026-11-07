@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
 import { closeSync, existsSync, openSync, rmSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { acquireLock, releaseLock, atomicWrite, read } from './fsx.mjs';
 import { runProcess, shellCommand, stopRunning, unstopped } from './proc.mjs';
-import { commitAll, commitPaths, excludeGitEntries, git, startRunBranch } from './git.mjs';
+import { commitAll, commitPaths, excludeGitEntries, git, startRunBranch, withLaneGit } from './git.mjs';
 import { holdOn, parsePlan, readPlan, setBox, writePlan } from './plan.mjs';
 import { attempt, decisionLines, executorIsLive, invocation, latestRun, newId, runExcludes, runIsLive, workerPrompt } from './run.mjs';
 import { auditDiff } from './audit.mjs';
@@ -13,28 +13,44 @@ import { stopFile, stoppedNote } from './stop.mjs';
 import { notifyRun } from './notify.mjs';
 import { readDiff } from './diff.mjs';
 import { reviewChange } from './review.mjs';
+import { planPath, planningFile } from './paths.mjs';
+import { planLanes, runLanes, forwardLaneStop, laneSummary } from './lanes.mjs';
+
+const decisionsPath = run => relative(run.cwd, planningFile(run.cwd, run.config, 'DECISIONS.md'));
 
 const cli = fileURLToPath(new URL('../ff.mjs', import.meta.url));
 const reviewedTiers = ['contract', 'high'];
 const maxLeadRuns = 3;
 const sleep = minutes => new Promise(done => setTimeout(done, minutes * 60000));
 const riskOf = (plan, task) => task.risk ?? plan.risk ?? 'routine';
+const selectedTasks = (plan, options) => plan.tasks.filter(task => !options.only || options.only.includes(task.id));
 
 function parseArgs(args) {
-  const options = { minutes: 60, force: false, foreground: false, plan: 'PLAN.md', id: '' };
+  const options = { minutes: 60, force: false, foreground: false, plan: undefined, id: '' };
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (flag === '--all') continue;
     if (flag === '--force') options.force = true;
     else if (flag === '--dry-run') options.dryRun = true;
     else if (flag === '--foreground') options.foreground = true;
+    else if (flag === '--lanes') {
+      options.lanes = Number(args[++i]);
+      if (!Number.isSafeInteger(options.lanes) || options.lanes < 1) throw new Error('--lanes needs a positive integer');
+    }
+    else if (flag === '--only') {
+      const value = args[++i];
+      if (!value || value.startsWith('--')) throw new Error('--only needs task IDs');
+      options.only = value.split(',').map(id => id.trim().toUpperCase()).filter(Boolean);
+    }
     else if (flag === '--timeout-min') options.minutes = Number(args[++i]);
-    else if (flag === '--plan') options.plan = args[++i];
+    else if (flag === '--plan') {
+      options.plan = args[++i];
+      if (!options.plan || options.plan.startsWith('--')) throw new Error('--plan needs a path');
+    }
     else if (flag === '--id') options.id = args[++i];
     else throw new Error(`Unknown run --all option: ${flag}`);
   }
   if (!(options.minutes > 0 && Number.isFinite(options.minutes))) throw new Error('--timeout-min must be a positive number');
-  if (!options.plan) throw new Error('--plan needs a path');
   return options;
 }
 
@@ -48,7 +64,7 @@ async function detach(args, cwd, id) {
   let exitCode = null;
   child.once('exit', code => { exitCode = code ?? 1; });
   const deadline = Date.now() + 15000;
-  while (exitCode === null && !existsSync(join(dir, 'run.json')) && Date.now() < deadline) await sleep(0.001);
+  while (exitCode === null && !existsSync(join(dir, 'run.json')) && latestRun(cwd)?.pid !== child.pid && Date.now() < deadline) await sleep(0.001);
   child.unref();
   if (exitCode !== null && !existsSync(join(dir, 'run.json'))) { console.error(read(logPath).trim()); return exitCode; }
   console.log(`${id}: running in the background (pid ${child.pid}). ff status shows progress.`);
@@ -89,15 +105,15 @@ function taskCard(run, plan, task, evidence) {
     'Report: write the report file named at the end of this prompt, once, when you finish. First line: DONE, or BLOCKED: <reason> only for a line under "When to stop". Then what changed, what you ran, deviations.',
     `The full playbook is ${join(run.root, 'playbook/default.md')}, with subject packs in ${join(run.root, 'playbook/packs')}. Read the ones that fit if you can reach them.`,
     '',
-    run.rules,
+    run.rules.replaceAll('`DECISIONS.md`', '`' + decisionsPath(run) + '`').replace('at the repository root', 'at the resolved planning-file location'),
   ];
   if (evidence) lines.push('', '## Previous attempt failed', evidence, '', 'Fix this, and rerun only what the fix touches before the acceptance. The acceptance above stays as it is.');
   return lines.join('\n');
 }
 
 function save(run) {
-  const { id, plan, branch, pid, startedAt, status, current, currentSince, note, stop, executorPid, tasks } = run;
-  atomicWrite(join(run.dir, 'run.json'), JSON.stringify({ id, kind: 'plan', plan, branch, pid, startedAt, status, current, currentSince, note, stop, executorPid, tasks }, null, 2));
+  const { id, plan, branch, pid, startedAt, status, current, currentSince, note, stop, executorPid, tasks, lanes, good } = run;
+  atomicWrite(join(run.dir, 'run.json'), JSON.stringify({ id, kind: 'plan', plan, branch, pid, startedAt, status, current, currentSince, note, stop, executorPid, tasks, lanes, good }, null, 2));
 }
 
 function settle(run, task, status, fields = {}) {
@@ -114,7 +130,7 @@ const resetTo = (run, commit) => git(run.cwd, ['reset', '-q', '--hard', '--recur
 // If it cannot be saved, the tree stays exactly as it is and the run stops.
 async function parkWork(run, task) {
   if (!run.repo) return '';
-  const keep = [run.plan, 'DECISIONS.md'].map(path => [path, read(resolve(run.cwd, path))]);
+  const keep = [run.plan, decisionsPath(run)].map(path => [path, read(resolve(run.cwd, path))]);
   const saved = await commitAll(run.cwd, `ff: unfinished ${task.id}`);
   if (!saved.ok) { run.stop = `${task.id}: its work could not be saved, so the worktree was left as it is. ${saved.error}`; return ''; }
   const left = await git(run.cwd, ['status', '--porcelain'], { timeoutMs: 120000 });
@@ -128,15 +144,15 @@ async function parkWork(run, task) {
   const reset = await resetTo(run, run.good);
   if (reset.exitCode !== 0) { run.stop = `${task.id}: the worktree could not return to the last good commit. ${reset.stderr}`; return name; }
   for (const [path, text] of keep) if (text) writePlan(run.cwd, path, text);
-  const notes = await commitPaths(run.cwd, `ff: plan notes after ${task.id}`, [run.plan, 'DECISIONS.md']);
+  const notes = await commitPaths(run.cwd, `ff: plan notes after ${task.id}`, [run.plan, decisionsPath(run)]);
   if (notes.head) run.good = notes.head;
   return name;
 }
 
 function mergeDecisions(run, decisions) {
-  const current = read(join(run.cwd, 'DECISIONS.md')), have = new Set(current.split(/\r?\n/));
+  const current = read(planningFile(run.cwd, run.config, 'DECISIONS.md')), have = new Set(current.split(/\r?\n/));
   const added = decisions.split(/\r?\n/).filter(line => line.trim() && !have.has(line));
-  if (added.length) writePlan(run.cwd, 'DECISIONS.md', `${current.trimEnd()}${current.trim() ? '\n' : ''}${added.join('\n')}\n`);
+  if (added.length) writePlan(run.cwd, decisionsPath(run), `${current.trimEnd()}${current.trim() ? '\n' : ''}${added.join('\n')}\n`);
 }
 
 // Any process may have moved HEAD. Its work is kept, and the run goes back to its own branch.
@@ -144,7 +160,7 @@ async function returnToBranch(run, task) {
   if (!run.repo) return '';
   const current = (await git(run.cwd, ['branch', '--show-current'])).stdout.trim();
   if (current === run.branch) return '';
-  const name = parkName(run, task), decisions = read(join(run.cwd, 'DECISIONS.md'));
+  const name = parkName(run, task), decisions = read(planningFile(run.cwd, run.config, 'DECISIONS.md'));
   await git(run.cwd, ['switch', '-q', '-c', name]);
   await commitAll(run.cwd, `ff: unfinished ${task.id}`);
   const back = await git(run.cwd, ['switch', '-q', run.branch]);
@@ -239,6 +255,7 @@ function checkStop(run) {
   rmSync(stopFile(run.cwd), { force: true });
   run.stopRequested = true;
   run.stop = stoppedNote;
+  forwardLaneStop(run);
   stopRunning();
   run.wake?.();
 }
@@ -265,7 +282,7 @@ function reportLine(report) {
 async function carryTask(run, task) {
   const plan = readPlan(run.cwd, run.plan, run.config);
   if (!task.accept.length) { settle(run, task, 'unverified', { note: 'no Accept commands; left unticked' }); return; }
-  let evidence = '', last;
+  let evidence = run.tasks[task.id]?.note ?? '', last;
   let executor = task.executor ?? run.builderRole;
   const fallback = run.config.roles.fallback;
   const fallbackBuilder = fallback ? resolveBuilder(run.config, fallback) : null;
@@ -273,7 +290,7 @@ async function carryTask(run, task) {
   for (let number = 1; number <= 2; number++) {
     if (number === 2 && fallbackBuilder?.cmd) executor = fallback;
     const builder = resolveBuilder(run.config, executor);
-    run.tasks[task.id] = { executor };
+    run.tasks[task.id] = { executor, attempts: number };
     run.current = `${task.id} ${task.title} (attempt ${number})`;
     run.currentSince = new Date().toISOString();
     save(run);
@@ -349,7 +366,7 @@ async function carryTask(run, task) {
 
 // Keeps the lead's plan edits and drops anything else it touched.
 async function keepPlanEdits(run, task) {
-  const kept = await commitPaths(run.cwd, `ff: lead replanned after ${task.id}`, [run.plan, 'DECISIONS.md']);
+  const kept = await commitPaths(run.cwd, `ff: lead replanned after ${task.id}`, [run.plan, decisionsPath(run)]);
   if (!kept.ok) { run.stop = `The lead's plan edits after ${task.id} could not be committed; the worktree was left as it is. ${kept.error}`; return; }
   run.good = kept.head;
   await resetTo(run, run.good);
@@ -361,20 +378,20 @@ function leadCard(run, task, evidence, reportFile) {
     `# Lead review of stuck task ${task.id}`,
     `Task ${task.id} in ${run.plan} failed twice in an unattended run. Its work is parked on a branch and the tree is clean. Nobody will answer.`,
     `Why it failed:\n${evidence}`,
-    `Decide what a good engineer would do next, and edit only ${run.plan} and DECISIONS.md:`,
+    `Decide what a good engineer would do next, and edit only ${run.plan} and ${decisionsPath(run)}:`,
     '- If the task is too big or its premise is wrong, narrow it or split it into new tasks with new IDs. Each keeps an Accept command that proves its outcome. Delete a task you replace.',
     '- The cause may be a different task or the plan itself. Fix what is actually wrong.',
     '- If it cannot move without a person, change nothing and say why.',
-    'Never change the "Exit condition" line. Never loosen acceptance just to pass; if an outcome really changes, record that in DECISIONS.md. The tool reports every change you make.',
+    `Never change the "Exit condition" line. Never loosen acceptance just to pass; if an outcome really changes, record that in ${decisionsPath(run)}. The tool reports every change you make.`,
     `Write what you decided and why to ${reportFile}.`,
     '',
-    run.rules,
+    run.rules.replaceAll('`DECISIONS.md`', '`' + decisionsPath(run) + '`').replace('at the repository root', 'at the resolved planning-file location'),
   ].join('\n');
 }
 
 // A clean process looks at a stuck task with fresh eyes and may reshape the plan.
 async function replan(run, task, evidence) {
-  if (run.stop || run.leadRuns >= maxLeadRuns || run.leads.has(task.id)) return;
+  if (run.only || run.stop || run.leadRuns >= maxLeadRuns || run.leads.has(task.id)) return;
   run.leadRuns++;
   run.leads.add(task.id);
   run.current = `lead reviewing ${task.id}`;
@@ -413,7 +430,7 @@ async function replan(run, task, evidence) {
 }
 
 function nextTask(plan, run) {
-  return plan.tasks.find(task => !task.done && !run.settled.has(task.id) && !holdOn(plan, task)
+  return selectedTasks(plan, run).find(task => !task.done && !run.settled.has(task.id) && !holdOn(plan, task)
     && task.depends.every(id => plan.tasks.find(other => other.id === id)?.done));
 }
 
@@ -437,7 +454,7 @@ async function checkExit(run, plan) {
 
 async function finish(run) {
   const plan = readPlan(run.cwd, run.plan, run.config);
-  const states = plan.tasks.map(task => ({ task, state: finalState(plan, run, task) }));
+  const states = selectedTasks(plan, run).map(task => ({ task, state: finalState(plan, run, task) }));
   const allDone = states.every(({ state }) => state.status === 'done');
   const exit = run.stop ? 'not checked' : await checkExit(run, plan);
   if (run.stopRequested && unstopped.length) {
@@ -458,6 +475,7 @@ async function finish(run) {
     finished && !complete ? 'Every task passed, but acceptance or the task list changed during the run. Read the plan changes before trusting this.' : '',
     run.stop ?? '',
     states.map(row).join('\n'),
+    run.lanes?.length ? `## Lanes\n${run.lanes.map(laneSummary).join('\n')}` : '',
     run.planNotes.length ? `## Plan changes\n${run.planNotes.map(note => `- ${note}`).join('\n')}` : '',
     plan.notes.length ? `## Plan notes\n${plan.notes.map(note => `- ${note}`).join('\n')}` : '',
     decisions.length ? `## To confirm\n${decisions.join('\n')}` : '',
@@ -498,14 +516,25 @@ async function openWorktree(run, interrupted) {
 export async function runAll(args, root, cwd = process.cwd()) {
   const options = parseArgs(args);
   const { config } = readConfig(cwd);
+  if (process.env.FF_LANE && process.env.FF_LANE_CONFIG) Object.assign(config, JSON.parse(process.env.FF_LANE_CONFIG));
+  if (options.lanes && !options.dryRun) {
+    const limit = Math.min(3, Number.isSafeInteger(config.run.maxLanes) && config.run.maxLanes > 0 ? config.run.maxLanes : 2);
+    if (options.lanes > limit) throw new Error(`--lanes exceeds run.maxLanes (${limit}; hard cap 3)`);
+  }
+  options.plan = relative(cwd, planPath(cwd, config, options.plan));
   const plan = readPlan(cwd, options.plan, config);
   if (!plan.tasks.length) { console.error([`No tasks found in ${options.plan}. Expected "- [ ] T1 <outcome>" under "## Tasks".`, ...plan.notes].join('\n')); return 1; }
   if (options.dryRun) {
     console.log(`Dry run: ${options.plan} (current plan; no processes or writes)`);
     for (const note of plan.notes) console.error(`Note: ${note}`);
-    for (const task of plan.tasks) {
+    for (const task of selectedTasks(plan, options)) {
       const { status, note } = finalState(plan, { tasks: {} }, task);
       console.log(`- ${task.id} ${task.title}: ${status === 'not started' ? 'would run' : status}${note ? ` — ${note}` : ''}`);
+    }
+    if (options.lanes) {
+      const grouped = planLanes({ ...plan, path: options.plan, tasks: selectedTasks(plan, options) }, options);
+      grouped.lanes.forEach((ids, index) => console.log(`Lane ${index + 1}: ${ids.join(', ')}`));
+      for (const id of grouped.tail) console.log(`${id}: serial — ${grouped.reasons[id]}`);
     }
     return 0;
   }
@@ -515,7 +544,7 @@ export async function runAll(args, root, cwd = process.cwd()) {
     return 1;
   }
   if (!options.foreground) return detach(args, cwd, newId());
-  const id = options.id || newId();
+  let id = options.id || newId();
   let watcher;
   const lock = acquireLock(join(cwd, '.ff/run.lock'), options.force);
   if (!lock.ok) { console.error(`Worktree busy: ${lock.reason} (pid ${lock.pid ?? 'unknown'}). Use ff status; --force overrides.`); return 1; }
@@ -525,19 +554,32 @@ export async function runAll(args, root, cwd = process.cwd()) {
       console.error(`Run ${last.id} still has a live process (pid ${last.executorPid ?? last.pid}). Stop it, or use --force.`);
       return 1;
     }
+    const adoptable = last?.kind === 'plan' && last.status === 'running' && last.plan === options.plan && Boolean(last.lanes?.length);
+    if (adoptable && !options.lanes && !options.force) {
+      console.error(`Run ${last.id} was interrupted while running lanes. Resume it with ff run --all --lanes <n>, or pass --force to run serially instead.`);
+      return 1;
+    }
+    const adopted = options.lanes && adoptable ? last : null;
+    if (adopted) id = adopted.id;
     const run = {
-      id, dir: join(cwd, '.ff/runs', id), cwd, root, config, builder, builderRole: config.roles.builder, plan: options.plan, minutes: options.minutes,
+      id, dir: join(cwd, '.ff/runs', id), cwd, root, config, builder, builderRole: config.roles.builder, plan: options.plan, minutes: options.minutes, only: options.only,
       pid: process.pid, startedAt: new Date().toISOString(), status: 'running', current: '', tasks: {},
       settled: new Set(), leads: new Set(), leadRuns: 0, planNotes: [], parks: 0, limitWaits: 0, rules: playbookRules(root),
     };
     for (const note of plan.notes) console.error(`Note: ${note}`);
-    if (!await openWorktree(run, last?.kind === 'plan' && last.status === 'running' && last.plan === run.plan ? last : null)) {
+    if (adopted) {
+      Object.assign(run, { lanes: adopted.lanes, branch: adopted.branch, good: adopted.good, tasks: adopted.tasks, startedAt: adopted.startedAt, repo: true });
+      const branch = await withLaneGit(() => git(cwd, ['branch', '--show-current']));
+      if (branch.stdout.trim() !== run.branch) throw new Error('Cannot adopt lanes: run branch changed; work left intact.');
+      recoverPlan(run, adopted);
+    } else if (!await openWorktree(run, last?.kind === 'plan' && last.status === 'running' && last.plan === run.plan ? last : null)) {
       await notifyRun(cwd, 'failed', `${options.plan}: the run could not start.`);
       return 1;
     }
     save(run);
-    rmSync(stopFile(cwd), { force: true });
+    if (!adopted) rmSync(stopFile(cwd), { force: true });
     watcher = setInterval(() => checkStop(run), 1000);
+    if (options.lanes && run.repo) await runLanes(run, { count: options.lanes, cli, save, checkStop });
     for (let task = nextTask(readPlan(cwd, run.plan, run.config), run); task && !run.stop; task = nextTask(readPlan(cwd, run.plan, run.config), run)) {
       try { await carryTask(run, task); }
       catch (error) {

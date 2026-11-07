@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readConfig } from './config.mjs';
+import { planningFile } from './paths.mjs';
 
 export function localDate(now = Date.now()) {
   const date = new Date(now);
@@ -31,8 +32,8 @@ export function parseFollowups(text, today = localDate()) {
   return { items, notes };
 }
 
-export function readFollowups(cwd, today = localDate()) {
-  try { return parseFollowups(readFileSync(join(cwd, 'FOLLOWUPS.md'), 'utf8'), today); }
+export function readFollowups(cwd, today = localDate(), config = readConfig(cwd, undefined, () => {}).config) {
+  try { return parseFollowups(readFileSync(planningFile(cwd, config, 'FOLLOWUPS.md'), 'utf8'), today); }
   catch (error) {
     if (error.code === 'ENOENT') return { items: [], notes: [] };
     return { items: [], notes: [`Cannot read FOLLOWUPS.md: ${error.message}`] };

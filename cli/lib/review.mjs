@@ -6,6 +6,7 @@ import { runProcess, commandTemplate } from './proc.mjs';
 import { atomicWrite } from './fsx.mjs';
 import { excludeGitEntries } from './git.mjs';
 import { diffLimit, diffOptions, readDiff, boundedDiff } from './diff.mjs';
+import { planPath } from './paths.mjs';
 
 const sensitiveKey = /(?:api[_-]?key|token|password|secret|authorization|credential|access[_-]?key)/i;
 export function redactSecrets(text) {
@@ -99,9 +100,10 @@ function removeArgs(args, pairs, flags) {
   return args.filter((arg, index) => !flags.includes(arg) && !pairs.includes(arg) && !pairs.includes(args[index - 1]) && !pairs.some(flag => arg.startsWith(`${flag}=`)));
 }
 
-function reviewPrompt({ root, cwd, base, plan: planPath = 'PLAN.md', scope, round, diff }) {
+function reviewPrompt({ root, cwd, base, plan: selectedPlan, config, scope, round, diff }) {
   const discipline = readFileSync(join(root, 'playbook/review.md'), 'utf8');
-  const plan = optionalFile(join(cwd, planPath));
+  const path = planPath(cwd, config, selectedPlan);
+  const plan = optionalFile(path);
   // The plan is the default acceptance file; an explicit markdown link can name a separate one.
   let acceptance = scope ?? plan;
   if (!scope) for (const link of plan.matchAll(/\[[^\]]*(?:acceptance|criteria)[^\]]*\]\(([^)]+)\)/gi)) {
@@ -114,11 +116,11 @@ function reviewPrompt({ root, cwd, base, plan: planPath = 'PLAN.md', scope, roun
     .replace('<path to this file>', join(root, 'playbook/review.md'))
     .replace('Known accepted, do not raise: <path>', 'Known accepted, do not raise: REVIEW.md excerpts above')
     .replace('<diff or range>', 'diff above')
-    .replace('Acceptance criteria: <path>', `Acceptance criteria: ${planPath} and linked criteria above`);
+    .replace('Acceptance criteria: <path>', `Acceptance criteria: ${path} and linked criteria above`);
   const sections = [
     'Read-only review. Do not modify files or run write commands.',
     `Range: ${base} to current worktree (including non-ignored untracked files); round ${round}.${round > 1 ? ' Fix diff only: --base must identify the pre-fix revision.' : ''}`,
-    `Acceptance criteria (${planPath}):\n${boundedContext(acceptance || '(no plan)')}`,
+    `Acceptance criteria (${path}):\n${boundedContext(acceptance || '(no plan)')}`,
     `Known accepted (REVIEW.md):\n${boundedContext(accepted || '(none)')}`,
     `Review discipline:\n${rules}`,
     `Diff:\n${boundedDiff(diff)}`,
@@ -160,7 +162,7 @@ export async function reviewChange({ root, cwd, config, base, risk, round = 1, p
   if (members.every(member => member === 'host')) return { exitCode: 3, rows: [], skipped: 'Use a clean read-only host sub-agent for this review.' };
   await excludeGitEntries(cwd, ['**/.ff/reviews/']);
   const diff = await readDiff(cwd, base);
-  const prompt = reviewPrompt({ root, cwd, base, plan, scope, round, diff });
+  const prompt = reviewPrompt({ root, cwd, config, base, plan, scope, round, diff });
   const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
   const dir = join(cwd, '.ff/reviews', id);
   const results = await Promise.all(members.map((member, index) => runReviewer(config, member, prompt, cwd, minutes, join(dir, `${index + 1}-prompt.md`)).catch(error => ({ row: { member, model: String(member), status: 'failed', durationMs: 0, verdict: 'unknown', warnings: [], note: error.message }, stdout: `${error.message}\n`, stderr: '' }))));

@@ -4,6 +4,7 @@ import { readConfig } from './config.mjs';
 import { jsonFile } from './fsx.mjs';
 import { git } from './git.mjs';
 import { runIsLive, executorIsLive } from './run.mjs';
+import { mergeContext, mergedProof, listWorktrees } from './worktree.mjs';
 
 const protectedName = /backup|bak|备份/i;
 function inside(root, path) {
@@ -71,19 +72,18 @@ export async function cleanup(args = [], cwd = process.cwd()) {
     } catch (error) { if (error.code !== 'ENOENT') console.error(`Skipped ${root}: ${error.message}`); }
   }
 
-  const head = await git(cwd, ['symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD']);
-  let base = head.exitCode === 0 ? head.stdout.trim() : '';
-  if (!base) for (const name of ['main', 'master']) {
-    if ((await git(cwd, ['show-ref', '--verify', '--quiet', `refs/heads/${name}`])).exitCode === 0) { base = `refs/heads/${name}`; break; }
-  }
+  const context = await mergeContext(cwd);
   const local = await git(cwd, ['for-each-ref', '--format=%(refname:short)', 'refs/heads/ff/']);
   if (local.exitCode !== 0) console.error(`Skipped branches: ${local.stderr || local.error}`);
   else for (const name of local.stdout.trim().split(/\r?\n/).filter(Boolean)) {
-    const merged = base && (await git(cwd, ['merge-base', '--is-ancestor', `refs/heads/${name}`, base])).exitCode === 0;
-    if (!merged) { console.log(`Kept ${name}: ${base ? 'unmerged' : 'default branch unknown'}`); continue; }
-    if (!apply) { console.log(`Would delete merged branch ${name}`); branches++; continue; }
-    const result = await git(cwd, ['branch', '-d', '--', name]);
-    if (result.exitCode === 0) { console.log(`Deleted merged branch ${name}`); branches++; }
+    const tip = await git(cwd, ['rev-parse', `refs/heads/${name}`]);
+    if (tip.exitCode !== 0) { console.error(`Skipped ${name}: ${tip.stderr || tip.error}`); continue; }
+    const proof = await mergedProof(cwd, name, tip.stdout.trim(), context);
+    if (!proof.merged) { console.log(`Kept ${name}: ${proof.proof}`); continue; }
+    if (!apply) { console.log(`Would delete merged branch ${name} (${proof.proof})`); branches++; continue; }
+    if ((await listWorktrees(cwd)).some(entry => entry.branch === name)) { console.log(`Kept ${name}: checked out in a worktree`); continue; }
+    const result = await git(cwd, ['update-ref', '-d', `refs/heads/${name}`, tip.stdout.trim()]);
+    if (result.exitCode === 0) { console.log(`Deleted merged branch ${name} (${proof.proof})`); branches++; }
     else console.error(`Skipped ${name}: ${result.stderr || result.error}`);
   }
   console.log(`${apply ? 'Removed' : 'Would remove'} ${count} entries, ${branches} branches; ${bytes} bytes ${apply ? 'freed' : 'would be freed'}.`);

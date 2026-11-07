@@ -104,7 +104,7 @@ Keep known-accepted items in `REVIEW.md`, and feed them to the next review so th
 - External response fields match official docs.
 - Failure consequences fit the value: one bad item does not void the whole.
 - For executor output, look for work that passes acceptance by a trick instead of doing the task, weakened or deleted assertions, fixtures edited to pass, out-of-scope changes, hardcoded paths and commits, gates true only in its environment, and unexplained deviation from the spec.
-- Visual work was seen rendered, or the report says it was not.
+- Visual work was seen rendered and judged as the frontend pack's "Judge the look" section says, or the report says it was not seen.
 - Docs changed with behavior. Follow-ups are written down.
 
 `ff audit` output is a hint list, except weakened tests, which block.

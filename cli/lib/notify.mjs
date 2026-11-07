@@ -1,5 +1,6 @@
+import { readConfig } from './config.mjs';
 import { createHash } from 'node:crypto';
-import { mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { followupLine, localDate, readFollowups } from './followups.mjs';
@@ -96,7 +97,7 @@ function prune(dir, now) {
 
 async function notifyFollowups(cwd, { settings, home, now, fetcher }) {
   const today = localDate(now);
-  const due = readFollowups(cwd, today).items.filter(item => item.due);
+  const due = readFollowups(cwd, today, readConfig(cwd, home, () => {}).config).items.filter(item => item.due);
   if (!due.length) return { skipped: 'no due follow-ups' };
   let repository = realpathSync(cwd);
   if (process.platform === 'win32') repository = repository.toLowerCase();
@@ -113,11 +114,33 @@ async function notifyFollowups(cwd, { settings, home, now, fetcher }) {
   return result;
 }
 
+// Codex records how a session started on the first line of its transcript: an interactive client, exec, or a sub-agent.
+function codexSource(path) {
+  let fd;
+  try {
+    fd = openSync(path, 'r');
+    const buffer = Buffer.alloc(4 * 1024 * 1024);
+    const line = buffer.subarray(0, readSync(fd, buffer, 0, buffer.length, 0)).toString('utf8').split('\n')[0];
+    return JSON.parse(line).payload?.source;
+  } catch { return undefined; } finally { if (fd !== undefined) closeSync(fd); }
+}
+
+// Notices come only from a session someone is using: never from sub-agents, headless runs, or sessions another tool started.
+export function attended(payload, env = process.env) {
+  if (payload?.agent_id || env.CLAUDE_CODE_SESSION_ATTENDED === '0') return false;
+  if (payload?.transcript_path) {
+    const source = codexSource(payload.transcript_path);
+    if (source !== undefined) return typeof source === 'string' && source !== 'exec';
+  }
+  return true;
+}
+
 // One notice per turn: a long turn that reported done is not reported again when the prompt sits idle.
 export async function handleHook(payload, { env = process.env, home = homedir(), now = Date.now(), fetcher = fetch } = {}) {
   if (env.FF_CHILD) return { skipped: 'child process' };
   const settings = notifySettings(env, home);
   if (!notifyChannels(settings).length) return { skipped: 'not configured' };
+  if (!attended(payload, env)) return { skipped: 'not an attended session' };
   const name = payload?.hook_event_name;
   if (name === 'SessionStart') return notifyFollowups(payload.cwd ?? process.cwd(), { settings, home, now, fetcher });
   const { dir, file } = sessionFile(home, payload?.session_id ?? payload?.cwd ?? 'session');

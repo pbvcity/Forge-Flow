@@ -25,6 +25,15 @@ After starting the run, if the host supports background tasks, start `node <this
 
 For each task it starts a clean process, runs acceptance itself, and commits on a run branch. A failed task is parked on a branch and the rest carry on. A stuck task goes to a clean lead process, which may narrow or split it. A provider limit pauses the run. Contract and high tasks are reviewed. It never pushes or goes live.
 
+When several tasks declare disjoint `Files:`, run them in parallel:
+
+```
+node <this skill's directory>/../../cli/ff.mjs run --all --dry-run --lanes 2
+node <this skill's directory>/../../cli/ff.mjs run --all --lanes 2
+```
+
+The first shows the grouping and why any task stays serial. Each lane gets its own worktree, and the tool merges lanes back one at a time, reruns their acceptance after merging, and removes the worktrees. A conflict moves those tasks to a serial pass at the end. Two lanes is the default; more costs more and rarely pays.
+
 ## 3. Pick up
 
 In any new session, on any host:
