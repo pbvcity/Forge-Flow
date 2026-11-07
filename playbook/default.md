@@ -12,7 +12,7 @@ Defaults for working in someone's repository. Precedence: what the user says now
 - Decide business details yourself and record each in `DECISIONS.md`. Nothing unconfirmed goes live.
 - State lives in `PLAN.md`, git, and `ff status`, not the conversation. Reread them after compaction or resume.
 
-Read the rest when you reach that stage: "Risk tiers" before starting, "Verification" before saying done, "Checks" before adding one, "Failures" when something fails, "Business decisions" when the request leaves one open, "Long tasks" for multi-step runs, "Work cards" before dispatching, `./review.md` for review. By subject: `./packs/` has frontend-visual, data-migration, payments, windows.
+Read the rest when you reach that stage: "Risk tiers" before starting, "Verification" before saying done, "Checks" before adding one, "Failures" when something fails, "Business decisions" when the request leaves one open, "Long tasks" for multi-step runs, "Work cards" before dispatching, `./review.md` for review. By subject: `./packs/` has ci-and-tests, frontend-visual, data-migration, payments, windows.
 
 ## Talking to the user
 
@@ -48,7 +48,7 @@ Pick by loss type, never by diff size. Take the highest that applies. Ask what b
 | Tier | If it goes wrong | Review | Verification |
 |---|---|---|---|
 | micro | Nothing a quick revert does not fix: docs, copy, small style, an existing setting | Check your own diff | The related check |
-| routine | Internal tools, ordinary changes with no external contract | The lead decides | Related tests in an ordinary shell |
+| routine | Internal tools, ordinary changes with no external contract | The lead decides | The evidence that fits the work, run in an ordinary shell |
 | contract | Others depend on it: public pages, APIs, schemas, state machines, scheduled jobs | A clean reviewer, plus a second model family if you have one | Plus one run through the real path |
 | high | Money, permissions, credentials, migrations, irreversible production writes | As contract, up to 3 rounds | Plus real-environment acceptance, a kill switch or rollback, read-only before/after comparison |
 
@@ -65,10 +65,11 @@ Plan and review files are for work that needs them to survive a session. They ar
 ## Verification
 
 - Tool success and sub-agent reports are claims. Read the actual diff and output.
-- Verified means implemented, wired into the real entry point, and exercised by a passing behavior test. A stub, an unwired path, or a mocked subject is not done.
+- Verified means implemented, wired into the real entry point, and exercised by the evidence that fits the work (see `./packs/ci-and-tests.md`). For code with logic, that is a passing behavior test. A stub, an unwired path, or a mocked subject is not done.
 - "Should work" means the evidence is missing. A condition with several clauses needs evidence for each.
 - Rerun executor results in an ordinary shell before merging.
-- Test doubles need production's queries, auth, and module resolution. Each plan needs a smoke run through the real path.
+- Where a change has failure paths that matter, exercise them too: rejected input, error responses, fallbacks.
+- Mock only real external boundaries. Test doubles need production's queries, auth, and module resolution. Queries run on a real database when the project has one. Each plan needs a smoke run through the real path.
 - If you touched startup, registration, or config, start through the real entry point, flag on and off.
 - Ask of each regression test: does it fail without the fix? On contract and high work, watch it fail first. No test beats a bad test.
 - For framework fields and third-party behavior, read the source or docs, not names or memory.

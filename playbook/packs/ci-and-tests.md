@@ -2,6 +2,27 @@
 
 Read when setting up or changing CI, choosing what to run before a push, or adding a slow or flaky test. The point is fast feedback at the lowest cost that still catches real problems.
 
+## Evidence by kind of work
+
+Ask what would show this works, and take the cheapest evidence that would catch the likely failure. A test file is one kind of evidence. Add a lasting test only where the behavior could break unnoticed and that matters. A throwaway script or a look at one page does not need one.
+
+| Work | What fits | Usually not worth it |
+|---|---|---|
+| Logic, calculation, state | Unit tests with boundaries and failure paths | Tests that repeat the implementation |
+| APIs, jobs, webhooks | A test through the real entry point, with error responses | Mocking the subject |
+| Queries and migrations | A real database or a copy, with before and after counts | Mock-only runs |
+| Third-party services | Sandbox or recorded real responses, then one real small cycle | Doubles written from memory |
+| UI and visual | The real render at desktop and phone widths, all states. Tests for logic and key flows | Pixel snapshots, tests of styling |
+| Config, env, deploy, CI | A real start through the entry point, flag on and off, dry run or lint | Tests that read the config back |
+| Refactors | Existing tests unchanged and passing. If coverage is poor, pin the behavior first | New tests for the new structure |
+| Scripts and one-off work | A run on real or sample input, dry run before writing | A test file for code that will be deleted |
+| Prompts, skills, model output | Several real sample runs, judged on the outcome | Exact text matches |
+| Performance, concurrency | Before and after measurements, concurrent callers on the real path | Assertions on load-dependent timing |
+| Docs and copy | Link check and reading the diff | Everything else |
+| Spikes and prototypes | Say it is throwaway, then show it once | Anything lasting, until it is kept |
+
+A fixed bug gets a test that fails without the fix whenever a test can express it. When none can, record how you reproduced it and how it now behaves. Report the evidence you used in a line.
+
 ## Choosing what to run
 
 - CI is the last check, not a debugger. Run the smallest sufficient set locally first, then push once.

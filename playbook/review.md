@@ -96,6 +96,7 @@ Keep known-accepted items in `REVIEW.md`, and feed them to the next review so th
 - Every claim in the report has evidence, clause by clause. Acceptance rerun in an ordinary shell.
 - Read 3 to 5 core paths end to end. Implemented, wired, and exercised, not stubbed.
 - Tests go through the production entry point and do not mock the subject.
+- The evidence fits the kind of work, and failure paths that matter were exercised. Queries ran on a real database when the project has one. Do not ask for tests where they add nothing.
 - Client input cannot set decisions the server should recompute: price, tier, approval.
 - Rate-limit and idempotency keys hold in the real deployment topology.
 - External response fields match official docs.

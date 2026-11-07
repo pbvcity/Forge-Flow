@@ -21,7 +21,8 @@ If the tool is missing or fails, use `PLAN.md` and `git log`. Skip tasks already
 
 Use the reuse ladder before writing code: does this need to exist, does the repository do it, the standard library, the platform, an existing dependency, one line? Then write the smallest version.
 
-- Contract and high: write the failing test first and watch it fail. A new test that passes at once proves nothing.
+- Choose the evidence that fits the work, using the key points in `go`. Not every change needs a new test.
+- Contract and high, where a test can express the behavior: write the failing test first and watch it fail. A new test that passes at once proves nothing.
 - A shortcut with a known limit gets a comment: `shortcut: <the limit>, <when to upgrade>`.
 - If you find a bug outside the task, fix it if the fix is small and clear. Otherwise note it.
 - Run the task's `Accept:` commands and tick the task in `PLAN.md` only on real passing output.
