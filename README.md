@@ -66,10 +66,10 @@ For unattended plans, set `roles.fallback` to retry with another executor or swi
 - A stuck task goes to a clean lead process, which may narrow or split it. Every change to the plan is listed, and changed acceptance means the result needs your review.
 - A provider limit pauses the run. It does not fail your tasks.
 - No-output limits are per executor (`idleMinutes`): Codex defaults to 10 minutes; Claude and Pi are unlimited. A silent process is killed and retried once per attempt; a silent reviewer is failed without a verdict.
-- Contract and high-risk tasks are reviewed. Routine tasks are not, so read those commits.
+- Contract and high-risk tasks are reviewed. Routine tasks are not, so read those commits. Runs list tasks that finished without review.
 - It never pushes, merges, or goes live. You get a report in the morning.
 
-This needs a command-line builder. Setup configures `claude`, `codex`, a Pi model, or `opencode:<provider>/<model>`. OpenCode also supports read-only reviews; see [setup](skills/setup/SKILL.md).
+This needs a command-line builder. Setup configures `claude`, `codex`, a Pi model, or `opencode:<provider>/<model>`. OpenCode also supports read-only reviews; see [setup](skills/setup/SKILL.md). When a host starts from a desktop icon or an editor with a short PATH, ff also looks in common install folders such as npm, nvm, Volta, and `~/.local/bin`, after everything already on PATH. Set `FF_EXTRA_PATH=0` to use PATH as it is.
 
 Use `ff wait [--timeout-min <n>]` as a host background task to wake the session when the latest run ends. It prints the status and summary path: exit 0 means complete, 1 means another ending or no run, and 3 means timeout. Without host background tasks, check `ff status` in a later session.
 
@@ -90,6 +90,8 @@ FF_NOTIFY_LANG=en
 ```
 
 Set either channel or both. `ff notify --test` sends a test message. `FF_NOTIFY_LANG` also takes `zh`.
+
+Notices name the machine. A turn that ends with a question is sent as "waiting" rather than "done". If a run's controller dies, it is reported when a session next starts in that project. Each send attempt is logged to `~/.ff/notify-log.jsonl`, keeping the last 200 attempts with no message text or secrets.
 
 | When | Claude Code | Codex | Pi |
 |---|---|---|---|

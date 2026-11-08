@@ -83,9 +83,20 @@ export function status(cwd = process.cwd(), args = []) {
       console.log(`Lane ${lane.letter}: ${lane.tasks.join(', ')} — ${child?.status || lane.status}${child?.current ? ` (${child.current})` : ''}; ${lane.path ?? 'pending'}${lane.merged ? '; merged' : ''}`);
     }
   }
+  const inLane = {};
+  for (const lane of run?.lanes ?? []) if (lane.path && !lane.merged) {
+    const child = laneRecord(lane);
+    for (const id of lane.tasks) {
+      const saved = child?.tasks?.[id];
+      inLane[id] = child?.current?.startsWith(`${id} `) ? { state: `running in lane ${lane.letter}` }
+        : saved ? { state: saved.status === 'done' ? `done in lane ${lane.letter}, not merged yet` : saved.status, note: saved.note }
+        : { state: `queued in lane ${lane.letter}` };
+    }
+  }
   const states = (plan?.tasks ?? []).map(task => {
     const saved = run?.tasks?.[task.id], hold = holdOn(plan, task);
     if (task.done) return { task, state: 'done' };
+    if (inLane[task.id]) return { task, ...inLane[task.id] };
     if (live && run.current?.startsWith(`${task.id} `)) return { task, state: 'running' };
     if (hold) return { task, state: 'held', note: hold.reason };
     if (saved) return { task, state: saved.status, note: saved.note };

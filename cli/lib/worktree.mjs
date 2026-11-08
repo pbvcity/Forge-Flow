@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync } from 'node:fs';
+import { copyFileSync, existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { readConfig } from './config.mjs';
 import { jsonFile } from './fsx.mjs';
@@ -44,6 +44,16 @@ export async function mergedProof(cwd, branch, tip, context = null) {
   if (base && (await git(cwd, ['merge-base', '--is-ancestor', tip, base])).exitCode === 0) return { merged: true, proof: `ancestor of ${base}` };
   if (!remote && base && (await git(cwd, ['diff', '--quiet', base, tip, '--'])).exitCode === 0) return { merged: true, proof: `identical tree to ${base} (no remote)` };
   return { merged: false, proof: base ? 'unmerged' : 'default branch unknown' };
+}
+
+// A worktree on another drive than the archive cannot be renamed into it.
+function moveFile(source, target) {
+  try { renameSync(source, target); }
+  catch (error) {
+    if (error.code !== 'EXDEV') throw error;
+    copyFileSync(source, target);
+    rmSync(source);
+  }
 }
 
 export async function listWorktrees(cwd) {
@@ -100,7 +110,7 @@ export async function archiveIgnored(path, archive, temp, apply, runsArchive) {
       }
       if (existsSync(target)) throw new Error('archive destination exists');
       if (inside(path, target)) throw new Error('archive is inside worktree');
-      if (apply) { mkdirSync(dirname(target), { recursive: true }); renameSync(source, target); }
+      if (apply) { mkdirSync(dirname(target), { recursive: true }); moveFile(source, target); }
       console.log(`${apply ? 'Archived' : 'Would archive'} ${source} -> ${target}`);
     } catch (error) { kept.push(`${name}: ${error.message}`); }
   }

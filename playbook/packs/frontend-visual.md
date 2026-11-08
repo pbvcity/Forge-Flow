@@ -34,6 +34,7 @@ Judge against the product's own bar: the intent, direction, and target in DESIGN
 - Report safety and quality separately. Safety is what is broken: overflow, unreadable text, contrast, missing states, focus. Quality is whether it meets the target. Safe but generic, below what DESIGN.md asks for, is a finding, not a pass.
 - For each value DESIGN.md fixes, such as type sizes at each width, colors, spacing, and breakpoints, mark it same or drifted. Drift without a reason is a finding.
 - Compare against what you are replacing or what was chosen: before and after, the chosen sample, or the named reference.
+- For game screens, check HUD legibility at play speed, contrast against the moving background, the safe area on the smallest target screen, which state wins when several show at once, and how much the player must read mid-action.
 - Do not invent problems to fill a list. If it meets the target, say so. Mark taste preferences as suggestions, not defects.
 - If one detail would lift it most, name it as a suggestion.
 

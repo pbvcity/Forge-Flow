@@ -49,8 +49,13 @@ export async function update(args = [], cwd = process.cwd()) {
   if (check) await updateStatus(cwd, config);
   let failures = 0;
   for (const host of hosts) {
-    const list = await runProcess(host.name, host.list, { cwd, timeoutMs: 15000 });
-    if (list.exitCode !== 0 || list.error || list.timedOut) { console.log(`${host.name}: not available; skipped`); continue; }
+    const list = await runProcess(host.name, host.list, { cwd, timeoutMs: 60000 });
+    if (list.error && /\bENOENT\b/.test(list.error)) { console.log(`${host.name}: not installed; skipped`); continue; }
+    if (list.exitCode !== 0 || list.error || list.timedOut) {
+      const why = list.timedOut ? 'did not answer in 60 s' : `${host.name} ${host.list.join(' ')} failed (exit ${list.exitCode}): ${(list.stderr || list.error || '').trim().split('\n')[0].slice(0, 160)}`;
+      console.log(`${host.name}: skipped; ${why}`);
+      continue;
+    }
     if (!host.installed.test(list.stdout)) { console.log(`${host.name}: Forge Flow not installed; skipped`); continue; }
     if (check) { console.log(`${host.name}: installed; ff update refreshes it`); continue; }
     if (!await updateHost(host, cwd, config.update.timeoutMs)) failures++;

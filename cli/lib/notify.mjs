@@ -1,9 +1,10 @@
 import { readConfig } from './config.mjs';
 import { createHash } from 'node:crypto';
 import { closeSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
+import { homedir, hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { followupLine, localDate, readFollowups } from './followups.mjs';
+import { latestRun, runIsLive } from './run.mjs';
 
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_DETAIL = 500;
@@ -52,18 +53,31 @@ export function redact(text) {
 export function noticeText({ event, project, detail }, lang = 'en') {
   const body = redact(detail).trim();
   const short = body.length > MAX_DETAIL ? `${body.slice(0, MAX_DETAIL)}…` : body;
-  return [`[Forge Flow] ${project}: ${LABELS[lang][event] ?? event}`, short].filter(Boolean).join('\n');
+  return [`[Forge Flow] ${project} @ ${hostname().split('.')[0]}: ${LABELS[lang][event] ?? event}`, short].filter(Boolean).join('\n');
 }
 
 async function post(url, body, fetcher, timeoutMs) {
   const response = await fetcher(url, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body), signal: AbortSignal.timeout(timeoutMs),
   });
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}`), { status: response.status });
+  return response.status;
+}
+
+function logAttempt(home, entry) {
+  try {
+    const file = join(home, '.ff/notify-log.jsonl');
+    mkdirSync(join(home, '.ff'), { recursive: true });
+    let lines = [];
+    try { lines = readFileSync(file, 'utf8').trimEnd().split('\n').filter(Boolean); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    lines.push(JSON.stringify(entry));
+    writeFileSync(file, `${lines.slice(-200).join('\n')}\n`);
+  } catch {}
 }
 
 // Failures name the channel and status only, because a Telegram URL contains the token.
-export async function sendNotice(notice, { settings = notifySettings(), fetcher = fetch, timeoutMs = 10000 } = {}) {
+export async function sendNotice(notice, { home = homedir(), settings = notifySettings(process.env, home), fetcher = fetch, timeoutMs = 10000 } = {}) {
   const text = noticeText(notice, settings.lang);
   const sends = [];
   if (settings.webhook) sends.push(['webhook', settings.webhook, { text, event: notice.event, project: notice.project }]);
@@ -71,6 +85,14 @@ export async function sendNotice(notice, { settings = notifySettings(), fetcher 
   const results = await Promise.allSettled(sends.map(([, url, body]) => post(url, body, fetcher, timeoutMs)));
   const failed = [];
   results.forEach((result, index) => {
+    let error = result.status === 'rejected' ? String(result.reason?.message ?? result.reason) : undefined;
+    if (error !== undefined) {
+      for (const secret of [sends[index][1], settings.webhook, settings.botToken, settings.chatId].filter(Boolean)) error = error.replaceAll(secret, '[hidden]');
+      error = redact(error.replace(/https?:\/\/[^\s]+/gi, '[hidden]'));
+    }
+    logAttempt(home, { time: new Date().toISOString(), event: notice.event, project: notice.project,
+      channel: sends[index][0], ok: result.status === 'fulfilled',
+      status: result.status === 'fulfilled' ? result.value : result.reason?.status, error });
     if (result.status === 'fulfilled') return;
     const status = result.reason?.message?.match(/^HTTP \d+$/)?.[0];
     failed.push(status ? `${sends[index][0]} (${status})` : sends[index][0]);
@@ -90,6 +112,7 @@ function readSession(file) {
 
 function prune(dir, now) {
   for (const name of readdirSync(dir)) {
+    if (name.startsWith('dead-run-')) continue;
     const path = join(dir, name);
     try { if (now - statSync(path).mtimeMs > STALE_MS) rmSync(path, { force: true }); } catch {}
   }
@@ -108,9 +131,25 @@ async function notifyFollowups(cwd, { settings, home, now, fetcher }) {
     throw error;
   }
   const detail = settings.lang === 'zh' ? `${due.length} 项到期跟进 (FOLLOWUPS.md)` : `${due.length} due follow-ups (FOLLOWUPS.md)`;
-  const result = await sendNotice({ event: 'followups', project: basename(cwd), detail: [detail, ...due.slice(0, 3).map(followupLine)].join('\n') }, { settings, fetcher });
+  const result = await sendNotice({ event: 'followups', project: basename(cwd), detail: [detail, ...due.slice(0, 3).map(followupLine)].join('\n') }, { settings, home, fetcher });
   if (!result.sent) rmSync(file, { force: true });
   prune(dir, now);
+  return result;
+}
+
+async function notifyDeadRun(cwd, { settings, home, fetcher }) {
+  const run = latestRun(cwd);
+  if (run?.status !== 'running' || runIsLive(run)) return { skipped: 'no dead run' };
+  const { dir, file } = sessionFile(home, `dead-run:${hostname()}:${run.id}`);
+  const marker = join(dir, `dead-run-${basename(file)}`);
+  try { writeFileSync(marker, JSON.stringify({ run: run.id }), { flag: 'wx' }); }
+  catch (error) {
+    if (error.code === 'EEXIST') return { skipped: 'already reported' };
+    throw error;
+  }
+  const detail = settings.lang === 'zh' ? `ff run ${run.id} 未跑完就中断了` : `ff run ${run.id} stopped without finishing`;
+  const result = await sendNotice({ event: 'failed', project: basename(cwd), detail }, { settings, home, fetcher });
+  if (!result.sent) rmSync(marker, { force: true });
   return result;
 }
 
@@ -142,7 +181,13 @@ export async function handleHook(payload, { env = process.env, home = homedir(),
   if (!notifyChannels(settings).length) return { skipped: 'not configured' };
   if (!attended(payload, env)) return { skipped: 'not an attended session' };
   const name = payload?.hook_event_name;
-  if (name === 'SessionStart') return notifyFollowups(payload.cwd ?? process.cwd(), { settings, home, now, fetcher });
+  if (name === 'SessionStart') {
+    const cwd = payload.cwd ?? process.cwd();
+    const dead = await notifyDeadRun(cwd, { settings, home, fetcher });
+    const followups = await notifyFollowups(cwd, { settings, home, now, fetcher });
+    if (dead.skipped) return followups;
+    return { sent: dead.sent + (followups.sent ?? 0), failed: [...dead.failed, ...(followups.failed ?? [])] };
+  }
   const { dir, file } = sessionFile(home, payload?.session_id ?? payload?.cwd ?? 'session');
   const state = readSession(file);
   if (name === 'UserPromptSubmit') {
@@ -155,19 +200,20 @@ export async function handleHook(payload, { env = process.env, home = homedir(),
   if (name === 'Stop') {
     if (payload.stop_hook_active || reported) return { skipped: 'already reported' };
     if (state.started !== undefined && now - state.started < settings.minMinutes * 60000) return { skipped: 'short turn' };
-    notice = { event: 'done', detail: payload.last_assistant_message };
+    const ending = String(payload.last_assistant_message ?? '').replace(/[\s*_`~]+$/u, '');
+    notice = { event: /[?？]$/u.test(ending) ? 'waiting' : 'done', detail: payload.last_assistant_message };
   } else if (name === 'StopFailure') {
     notice = { event: 'failed', detail: payload.error_details ?? payload.last_assistant_message ?? payload.error };
   } else if (name === 'Notification' && payload.notification_type === 'permission_prompt') {
     // Fires only for a dialog a person must answer, so each one counts and the turn can still report done.
     if (payload.agent_id) return { skipped: 'sub-agent' };
-    return sendNotice({ event: 'permission', detail: payload.message, project: basename(payload.cwd ?? process.cwd()) }, { settings, fetcher });
+    return sendNotice({ event: 'permission', detail: payload.message, project: basename(payload.cwd ?? process.cwd()) }, { settings, home, fetcher });
   } else if (name === 'Notification' && payload.notification_type === 'idle_prompt') {
     if (reported) return { skipped: 'already reported' };
     notice = { event: 'waiting', detail: payload.message };
   } else return { skipped: 'other event' };
   writeFileSync(file, JSON.stringify({ ...state, notified: now }));
-  return sendNotice({ ...notice, project: basename(payload.cwd ?? process.cwd()) }, { settings, fetcher });
+  return sendNotice({ ...notice, project: basename(payload.cwd ?? process.cwd()) }, { settings, home, fetcher });
 }
 
 export async function notifyRun(cwd, event, detail) {

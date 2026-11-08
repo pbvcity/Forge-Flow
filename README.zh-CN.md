@@ -42,7 +42,7 @@ pi install git:github.com/pbvcity/Forge-Flow
 
 无人值守计划可设置 `roles.fallback`，在重试或额度受限时换用备用执行器。任务可用 `Executor:` 指定执行器，报告会注明实际使用者。详见 [CLI 配置](cli/README.md#whole-plans)。
 
-OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角色。`doctor` 会列出可用模型，提示词文件和评审权限的说明见 [setup](skills/setup/SKILL.md)。
+OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角色。`doctor` 会列出可用模型，提示词文件和评审权限的说明见 [setup](skills/setup/SKILL.md)。从桌面图标或编辑器启动的宿主 PATH 往往不全，ff 会在已有 PATH 之后再查找 npm、nvm、Volta、`~/.local/bin` 等常见安装目录。设 `FF_EXTRA_PATH=0` 可只用原有 PATH。
 
 | Claude Code | Codex | Pi | 作用 |
 |---|---|---|---|
@@ -70,7 +70,7 @@ OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角�
 - 卡住的任务交给干净的主控进程，它可以收窄或拆分任务。计划的每处改动都会列出，验收被改过的结果要你复核。
 - 模型额度用尽时运行会暂停，不会把任务判为失败。
 - 无输出超时按执行者配置（`idleMinutes`）：Codex 默认 10 分钟，Claude 和 Pi 默认不限。静默进程会被终止，每次尝试可免费重试一次。评审静默超时记为执行失败，但它已打印的 FAIL 仍然有效。
-- 契约档和高风险任务会评审。常规任务不评审，这些提交要你自己读。
+- 契约档和高风险任务会评审。常规任务不评审，这些提交要你自己读。运行报告会列出已完成但未经评审的任务。
 - 它不会推送、合并或上线。第二天早上你会看到一份报告。
 
 这需要一个能在命令行运行的执行者，配置时会设好 `claude`、`codex` 或 Pi 上的模型。
@@ -92,6 +92,8 @@ FF_NOTIFY_LANG=zh
 ```
 
 两个渠道可以只配一个。`ff notify --test` 发送测试消息。
+
+通知会注明机器名。一轮以提问结束时，会发送「等待你回应」（waiting）通知，而非「已完成」（done）。如果运行的主控进程意外退出，下次在该项目启动会话时会报告。每次发送尝试都会记入 `~/.ff/notify-log.jsonl`，只保留最近 200 次，不记录消息正文或秘密信息。
 
 | 时机 | Claude Code | Codex | Pi |
 |---|---|---|---|

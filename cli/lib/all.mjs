@@ -456,7 +456,7 @@ async function finish(run) {
   const plan = readPlan(run.cwd, run.plan, run.config);
   const states = selectedTasks(plan, run).map(task => ({ task, state: finalState(plan, run, task) }));
   const allDone = states.every(({ state }) => state.status === 'done');
-  const exit = run.stop ? 'not checked' : await checkExit(run, plan);
+  const exit = run.stop || run.only ? 'not checked' : await checkExit(run, plan);
   if (run.stopRequested && unstopped.length) {
     run.executorPid = unstopped[0];
     run.stop = `Could not confirm that pid ${unstopped.join(', ')} ended. Check before starting another run.`;
@@ -464,6 +464,8 @@ async function finish(run) {
   const finished = states.length > 0 && allDone && !run.stop && exit !== 'failed' && !plan.notes.length;
   const complete = finished && !run.criteriaChanged;
   const status = complete ? 'complete' : finished ? 'needs review' : run.stop ? 'stopped' : 'incomplete';
+  const unreviewed = states.filter(({ state }) => state.status === 'done' && state.review === 'review unavailable').map(({ task }) => task.id);
+  const reviewNotice = unreviewed.length ? `Finished without review: ${unreviewed.join(', ')}. Review them with ff review before merging.` : '';
   const row = ({ task, state }) => {
     const facts = [state.commit, state.attempts > 1 ? `${state.attempts} attempts` : '', state.review, ...(state.warnings ?? []), state.note, state.parked ? `work kept on ${state.parked}` : '', state.executor ? `executor: ${state.executor}` : ''].filter(Boolean);
     return `- ${task.id} ${task.title}: ${state.status}${facts.length ? ` — ${facts.join('; ')}` : ''}${state.report ? `\n  ${state.report}` : ''}`;
@@ -472,6 +474,7 @@ async function finish(run) {
   const summary = [
     `# ${plan.goal || run.plan}`,
     `Status: ${status}. Exit condition: ${exit}.${run.branch ? ` Branch: ${run.branch}.` : ''}`,
+    reviewNotice,
     finished && !complete ? 'Every task passed, but acceptance or the task list changed during the run. Read the plan changes before trusting this.' : '',
     run.stop ?? '',
     states.map(row).join('\n'),
@@ -488,7 +491,7 @@ async function finish(run) {
   run.current = '';
   save(run);
   const counts = `${states.filter(({ state }) => state.status === 'done').length} of ${states.length} tasks done.`;
-  await notifyRun(run.cwd, complete ? 'done' : run.stopRequested ? 'paused' : 'failed', [`${plan.goal || run.plan}: ${status}. ${counts}`, run.stop].filter(Boolean).join('\n'));
+  await notifyRun(run.cwd, complete ? 'done' : run.stopRequested ? 'paused' : 'failed', [`${plan.goal || run.plan}: ${status}. ${counts}`, reviewNotice, run.stop].filter(Boolean).join('\n'));
   return complete ? 0 : 1;
 }
 

@@ -7,6 +7,7 @@ import { atomicWrite } from './fsx.mjs';
 import { excludeGitEntries } from './git.mjs';
 import { diffLimit, diffOptions, readDiff, boundedDiff } from './diff.mjs';
 import { planPath } from './paths.mjs';
+import { authFailure } from './failure.mjs';
 
 const sensitiveKey = /(?:api[_-]?key|token|password|secret|authorization|credential|access[_-]?key)/i;
 export function redactSecrets(text) {
@@ -30,8 +31,12 @@ const noneReported = /^\s*(?:\*\*)?(?:BLOCKER|HIGH)(?:\*\*)?\s*[:=]?\s*(?:\*\*)?
 // The verdict is the reviewer's. The tool only refuses to call a contradiction a pass.
 export function parseReview(text) {
   const warnings = [];
-  const last = [...text.matchAll(/^[ \t]*(?:\*\*)?VERDICT(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*([A-Za-z]*)/gim)].at(-1)?.[1].toUpperCase();
-  let verdict = ['PASS', 'FAIL'].includes(last) ? last : 'unknown';
+  const last = [...text.matchAll(/^[ \t]*(?:\*\*)?VERDICT(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*([^\r\n]*)/gim)].at(-1)?.[1] ?? '';
+  let verdict = /^(PASS|FAIL)(?:\s|\*\*|\.)*$/i.exec(last)?.[1].toUpperCase() ?? 'unknown';
+  if (verdict !== 'FAIL' && ((/^PASS\b/i.test(last) && verdict !== 'PASS') || /\bconditional\b|有条件|条件通过/i.test(last))) {
+    verdict = 'FAIL';
+    warnings.push('conditional pass counted as FAIL');
+  }
   if (verdict === 'PASS' && blocking.test(text.replace(noneReported, ''))) {
     verdict = 'FAIL';
     warnings.push('PASS alongside a BLOCKER or HIGH line; counted as FAIL');
@@ -150,10 +155,12 @@ async function runReviewer(config, member, prompt, cwd, minutes, promptPath) {
   const environmentFailure = signals.find(signature => result.stdout.includes(signature) || result.stderr.includes(signature))
     || (executor.promptFile && missingOpencodeAgent(result.stderr) ? 'OpenCode read-only agent unavailable' : undefined);
   const parsed = parseReview(result.stdout);
-  const status = environmentFailure || result.idleTimedOut ? 'failed' : result.timedOut ? 'timeout' : result.error || result.exitCode !== 0 || result.signal ? 'failed' : 'completed';
+  let status = environmentFailure || result.idleTimedOut ? 'failed' : result.timedOut ? 'timeout' : result.error || result.exitCode !== 0 || result.signal ? 'failed' : 'completed';
+  const auth = status !== 'completed' && (authFailure(result.stderr.slice(-2000)) || (result.exitCode !== null && result.exitCode !== 0 && result.stdout.length < 2000 ? authFailure(result.stdout) : ''));
+  if (auth) status = 'auth failed';
   const warnings = [...parsed.warnings, ...(result.outputTruncated ? ['Output truncated: last 4 MiB per stream retained'] : [])];
-  const verdict = environmentFailure ? 'unknown' : parsed.verdict === 'PASS' && (status !== 'completed' || result.outputTruncated) ? 'unknown' : parsed.verdict;
-  return { row: { ...base, verdict, warnings, model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, ...(result.idleTimedOut ? { idleTimedOut: true, note: result.reason } : {}), ...(environmentFailure ? { note: environmentFailure } : {}), pid: result.pid, error: result.error }, stdout: result.stdout, stderr: result.stderr };
+  const verdict = environmentFailure || auth ? 'unknown' : parsed.verdict === 'PASS' && (status !== 'completed' || result.outputTruncated) ? 'unknown' : parsed.verdict;
+  return { row: { ...base, verdict, warnings, model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, ...(result.idleTimedOut ? { idleTimedOut: true, note: result.reason } : {}), ...(environmentFailure ? { note: environmentFailure } : {}), ...(auth ? { note: `${auth}; log in to ${executor.command} and rerun` } : {}), pid: result.pid, error: result.error }, stdout: result.stdout, stderr: result.stderr };
 }
 
 export async function reviewChange({ root, cwd, config, base, risk, round = 1, panel = false, plan, scope, minutes = 60 }) {

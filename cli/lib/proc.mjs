@@ -1,11 +1,48 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
 
 export function isAlive(pid) {
   if (!Number.isInteger(pid) || pid <= 0) return 'unknown';
   try { process.kill(pid, 0); return true; }
   catch (error) { return error.code === 'ESRCH' ? false : 'unknown'; }
+}
+
+// A host started from a desktop icon or an editor often gets a short PATH. Common install folders go at the end, so nothing already found changes.
+export function withToolDirs(env = process.env, home = homedir(), platform = process.platform) {
+  if (env.FF_EXTRA_PATH === '0') return env;
+  const key = Object.keys(env).find(name => name.toLowerCase() === 'path') ?? 'PATH';
+  const same = dir => platform === 'win32' ? dir.toLowerCase().replace(/[\\/]+$/, '') : dir.replace(/\/+$/, '');
+  const current = String(env[key] ?? '').split(delimiter).filter(Boolean);
+  const seen = new Set(current.map(same));
+  const extra = [];
+  for (const dir of toolDirs(env, home, platform)) {
+    if (!dir || seen.has(same(dir)) || !existsSync(dir)) continue;
+    seen.add(same(dir)); extra.push(dir);
+  }
+  return extra.length ? { ...env, [key]: [...current, ...extra].join(delimiter) } : env;
+}
+
+function toolDirs(env, home, platform) {
+  const dirs = [env.NVM_BIN, env.VOLTA_HOME && join(env.VOLTA_HOME, 'bin'), join(home, '.volta', 'bin'), join(home, '.local', 'bin'), join(home, '.npm-global', 'bin'), join(home, '.bun', 'bin'), join(home, '.cargo', 'bin')];
+  if (platform === 'win32') {
+    dirs.push(env.APPDATA && join(env.APPDATA, 'npm'), env.NVM_SYMLINK, env.LOCALAPPDATA && join(env.LOCALAPPDATA, 'pnpm'), join(home, 'scoop', 'shims'));
+  } else {
+    dirs.push(newestNvm(home), join(home, '.local', 'share', 'pnpm'), '/opt/homebrew/bin', '/usr/local/bin');
+  }
+  return dirs;
+}
+
+// Only the newest nvm Node, so an old version's copy of a tool is never picked.
+function newestNvm(home) {
+  const root = join(home, '.nvm', 'versions', 'node');
+  try {
+    const versions = readdirSync(root).filter(name => /^v\d+\.\d+\.\d+$/.test(name));
+    const parts = name => name.slice(1).split('.').map(Number);
+    versions.sort((a, b) => { const [x, y] = [parts(a), parts(b)]; return y[0] - x[0] || y[1] - x[1] || y[2] - x[2]; });
+    return versions.length ? join(root, versions[0], 'bin') : '';
+  } catch { return ''; }
 }
 
 export function findCommand(command, env = process.env, cwd = process.cwd()) {
@@ -75,7 +112,7 @@ export function runProcess(command, args = [], options = {}) {
     let child, overall, idle, exited, finished = false, terminating = false;
     let outputTruncated = false;
     let idleTimedOut = false, timedOut = false, reason = null, killedTree = false, error = null;
-    const env = { ...(options.env ?? process.env), FF_CHILD: '1' };
+    const env = { ...withToolDirs(options.env ?? process.env), FF_CHILD: '1' };
     for (const key of Object.keys(env)) if (/^(CLAUDECODE|CODEX_SANDBOX|CODEX_THREAD_ID)$/i.test(key)) delete env[key];
     const finish = (exitCode = null, signal = null) => {
       if (finished || terminating) return;

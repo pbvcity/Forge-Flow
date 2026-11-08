@@ -197,7 +197,7 @@ async function cleanRun(cwd, branch) {
 export function createLane({ cwd, config = {}, runId, letter, tasks, checkpoint }) {
   return withLaneGit(async () => {
     const root = await laneRoot(cwd, config);
-    const lane = { letter, tasks, checkpoint, path: resolve(root, `ff-${runId.slice(0, 8)}-${letter}`), branch: `ff/lane/${runId.slice(0, 19)}/${letter}`, status: 'ready', merged: false };
+    const lane = { letter, tasks, checkpoint, path: resolve(root, `ff-${runId.slice(-8)}-${letter}`), branch: `ff/lane/${runId.slice(0, 19)}/${letter}`, status: 'ready', merged: false };
     try {
       if (!inside(root, lane.path)) throw new Error('lane path outside worktree root');
       noLinks(lane.path, root);
@@ -248,7 +248,7 @@ export function mergeLane({ cwd, config = {}, lane, runBranch, tasks, child, pla
     const hasDecisions = (await output(cwd, ['ls-tree', '--name-only', tip, '--', decisionName])).trim();
     const childDecisions = hasDecisions ? await output(cwd, ['show', `${tip}:${decisionName}`]) : '';
     const changed = (await output(cwd, ['diff', '--name-only', '--no-renames', '-z', `${lane.checkpoint}..${tip}`, '--'])).split('\0').filter(Boolean);
-    const outsideFiles = changed.filter(file => !selected.some(task => task.files?.some(glob => matches(file, glob))));
+    const outsideFiles = changed.filter(file => file !== planName && file !== decisionName && !selected.some(task => task.files?.some(glob => matches(file, glob))));
     const result = { merged: false, tip, done: [], tail: [...lane.tasks], outsideFiles, acceptance: {} };
     if (shouldStop()) return result;
     const merged = await git(cwd, ['-c', 'commit.gpgsign=false', 'merge', '--no-ff', '--no-verify', '--no-commit', tip], { timeoutMs });

@@ -1,3 +1,6 @@
+import { statSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { runProcess } from './proc.mjs';
 import { readConfig, resolveBuilder } from './config.mjs';
 import { invocation } from './run.mjs';
@@ -24,14 +27,39 @@ export function groupModels(text) {
   }
   return groups;
 }
+export function loginEvidence(name, env = process.env, home = homedir(), platform = process.platform) {
+  const variables = name === 'codex' ? ['OPENAI_API_KEY'] : name === 'claude' ? ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] : [];
+  for (const variable of variables) if (env[variable]) return `found (${variable})`;
+  const file = name === 'codex' ? join(env.CODEX_HOME || join(home, '.codex'), 'auth.json')
+    : name === 'claude' ? join(home, '.claude', '.credentials.json') : null;
+  if (!file) return 'unknown';
+  try {
+    if (statSync(file).isFile()) return `found (${file})`;
+    return 'unknown';
+  } catch (error) {
+    if (!['ENOENT', 'ENOTDIR'].includes(error.code)) return 'unknown';
+  }
+  return name === 'claude' && platform === 'darwin' ? 'unknown' : 'not found';
+}
+
 export async function doctor(cwd = process.cwd()) {
   console.log(`Node ${process.version} (${Number(process.versions.node.split('.')[0]) >= 22 ? 'supported' : 'unsupported; Node 22+ required'})`);
   const families = new Set();
   const names = ['git', 'claude', 'codex', 'pi', 'opencode', 'grok'];
+  const { config, found } = readConfig(cwd);
+  const roleCommands = new Map();
+  for (const [role, selected] of Object.entries(config.roles)) {
+    const executor = resolveBuilder(config, selected);
+    if (!selected || !executor.cmd) continue;
+    const { command } = invocation(executor);
+    roleCommands.set(role, command);
+    if (!names.includes(command)) names.push(command);
+  }
   const results = await Promise.all(names.map(name => runProcess(name, ['--version'], { cwd, timeoutMs: 15000 })));
   for (let i = 0; i < names.length; i++) {
     const result = results[i], name = names[i];
     console.log(`${name}: ${result.timedOut ? 'timed out' : result.exitCode === 0 ? result.stdout.trim() || result.stderr.trim() || 'available (no version output)' : 'unavailable'}`);
+    if (name !== 'git' && result.exitCode === 0 && !result.timedOut) console.log(`  login: ${loginEvidence(name)}`);
     if (result.exitCode === 0 && ['claude', 'codex', 'grok'].includes(name)) families.add({ claude: 'anthropic', codex: 'openai', grok: 'xai' }[name]);
   }
   if (results[names.indexOf('pi')].exitCode === 0) {
@@ -55,8 +83,12 @@ export async function doctor(cwd = process.cwd()) {
       for (const [provider, list] of providers) console.log(`opencode ${provider}: ${list.join(', ')}`);
     } else console.log(`opencode model list ${models.timedOut ? 'timed out' : 'unavailable'}`);
   }
-  const { config, found } = readConfig(cwd);
   console.log(`Config: ${found.length ? found.join(', ') : 'not found (defaults)'}`);
+  const impacts = { builder: 'ff run cannot build', reviewer: 'ff review cannot run the configured reviewer', second: 'ff review cannot run the second reviewer', fallback: 'ff run cannot use the fallback' };
+  for (const [role, command] of roleCommands) {
+    const result = results[names.indexOf(command)];
+    if (result.exitCode !== 0 || result.timedOut) console.log(`${role} uses ${command}, which ${result.timedOut ? 'did not respond' : 'is not installed'}: ${impacts[role] || `the ${role} role cannot run`}`);
+  }
   const layout = await initState(cwd, config);
   console.log(`Files and folders: ${layout.hasBlock ? 'present' : 'missing'} (${layout.rules})`);
   console.log(`Temp folder: ${layout.temp}/ (${layout.tempIgnored ? 'ignored' : 'not ignored'})`);

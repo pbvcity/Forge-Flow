@@ -97,6 +97,10 @@ Before adding a check, assertion, or stop condition, answer: what specific loss 
 
 Classify first.
 
+- Do not change code until you can name the root cause.
+- Point the root cause to a file and line.
+- Change one thing at a time between attempts.
+
 | Class | Looks like | Do |
 |---|---|---|
 | Unsafe | Unexpected production write, possible credential leak | Stop now |
