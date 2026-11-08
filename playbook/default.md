@@ -11,6 +11,7 @@ Defaults for working in someone's repository. Precedence: what the user says now
 - Claim done only with fresh output from the real thing. Say what you did not verify.
 - Decide business details yourself and record each in `DECISIONS.md`. Nothing unconfirmed goes live.
 - State lives in `PLAN.md`, git, and `ff status`, not the conversation. Reread them after compaction or resume.
+- If `~/.ff/config.json` does not exist, offer the setup skill once. If the repository has no planning folder and its rules file has no "Files and folders" section, offer `ff init` once, preview first. Carry on either way.
 
 Read the rest when you reach that stage: "Risk tiers" before starting, "Verification" before saying done, "Checks" before adding one, "Failures" when something fails, "Business decisions" when the request leaves one open, "Long tasks" for multi-step runs, "Work cards" before dispatching, `./review.md` for review. By subject: `./packs/` has ci-and-tests, frontend-visual, data-migration, payments, windows.
 

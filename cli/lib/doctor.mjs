@@ -1,4 +1,4 @@
-import { statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { runProcess } from './proc.mjs';
@@ -27,6 +27,17 @@ export function groupModels(text) {
   }
   return groups;
 }
+// Sub-agent files that pin a model or effort, read for that one line only.
+export function sessionTiers(home = homedir()) {
+  const count = (dir, ext, line) => {
+    try { return readdirSync(dir).filter(name => name.endsWith(ext) && line.test(readFileSync(join(dir, name), 'utf8'))).length; }
+    catch { return 0; }
+  };
+  const claude = count(join(home, '.claude', 'agents'), '.md', /^(?:model|effort):\s*\S/m);
+  const codex = count(join(home, '.codex', 'agents'), '.toml', /^(?:model|model_reasoning_effort)\s*=/m);
+  return claude || codex ? `Claude Code ${claude}, Codex ${codex}` : 'none (setup can add three)';
+}
+
 export function loginEvidence(name, env = process.env, home = homedir(), platform = process.platform) {
   const variables = name === 'codex' ? ['OPENAI_API_KEY'] : name === 'claude' ? ['ANTHROPIC_API_KEY', 'CLAUDE_CODE_OAUTH_TOKEN'] : [];
   for (const variable of variables) if (env[variable]) return `found (${variable})`;
@@ -94,6 +105,7 @@ export async function doctor(cwd = process.cwd()) {
   console.log(`Temp folder: ${layout.temp}/ (${layout.tempIgnored ? 'ignored' : 'not ignored'})`);
   console.log(`Model families: ${families.size} (inferred from CLI/model names; availability is not authentication)`);
   await updateStatus(cwd, config);
+  console.log(`Session tiers: ${sessionTiers()}`);
   console.log(`Notifications: ${notifyChannels(notifySettings()).join(', ') || 'off'}`);
   console.log(`Branch protection: ${await protectionState(cwd)}`);
   const builder = resolveBuilder(config);

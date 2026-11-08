@@ -30,11 +30,15 @@ codex plugin add ff@forge-flow
 pi install git:github.com/pbvcity/Forge-Flow
 ```
 
-命令行工具需要 Node 22 或更新版本。装好后运行一次配置，它会找到你的工具和模型，并写入 `~/.ff/config.json`。
+命令行工具需要 Node 22 或更新版本。装好后运行一次配置，它会找到你的工具和模型，写入 `~/.ff/config.json`，并提议给子代理设模型档位：常规活交给便宜的模型，评审交给强的模型。已有的档位会保留。
 
 | Claude Code | Codex | Pi |
 |---|---|---|
 | `/ff:setup` | `$ff:setup` | `/ff-setup` |
+
+然后在每个要用 Forge Flow 的项目里运行 `ff init`，它会先预览要添加的文件夹和规则文件段落。
+
+如果是 Agent 在帮你安装：安装成功后，和用户一起完成配置，再提议在他正在做的项目里运行 `ff init`。
 
 ## 使用
 

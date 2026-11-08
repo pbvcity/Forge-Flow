@@ -1,6 +1,6 @@
 ---
 name: setup
-description: Detects installed coding tools and available models, then writes ~/.ff/config.json, asking only who leads reviews. Use right after installing Forge Flow, when the user asks to configure it, or when models or tools have changed.
+description: Detects installed coding tools and available models, writes ~/.ff/config.json, and offers session model tiers for sub-agents. Use right after installing Forge Flow, when the user asks to configure it, or when models or tools have changed.
 ---
 
 # setup
@@ -65,12 +65,66 @@ Create `~/.ff/my-rules.md` only if the user has rules to add. Do not overwrite o
 
 Run `node <this skill's directory>/../../cli/ff.mjs init` to preview the folders, ignore lines, and rules-file block it would add, then `init --apply` if they fit. It only adds what is missing, keeps existing names such as `temp-ignore/`, and never rewrites a rules file.
 
-## 6. Offer notifications and branch protection
+## 6. Offer session model tiers
+
+Sub-agents cost less and finish sooner on a model that fits the job. This is for work inside a session; `roles` above cover unattended runs.
+
+Check what the user already has. Read file names and `model` or effort lines only.
+
+- Claude Code: `~/.claude/agents/*.md` with a `model:` line, and a delegation section in `~/.claude/CLAUDE.md`.
+- Codex: `~/.codex/agents/*.toml` with `model` or `model_reasoning_effort`, and `~/.codex/AGENTS.md`.
+- Pi has no sub-agents of its own, so only the delegation section applies, in `~/.pi/agent/AGENTS.md`.
+
+If tiers exist, report them and change nothing. Otherwise ask one question: lean toward lower cost, or toward quality? Then show the files and write them once the user agrees. Write only files that do not exist. Add the delegation section to the end of a rules file, and never rewrite what is there.
+
+| Tier | Use for | Claude Code, lower cost | Claude Code, quality | Codex effort, lower cost | Codex effort, quality |
+|---|---|---|---|---|---|
+| `ff-light` | Counts, file checks, list comparisons, format conversion, simple searches | `haiku`, `low` | `sonnet`, `low` | `low` | `medium` |
+| `ff-standard` | Routine implementation, doc sync, summaries, reconciling sources | `sonnet`, `medium` | `sonnet`, `high` | `medium` | `high` |
+| `ff-deep` | Reviews of contract or high-risk changes, root causes, specs | `opus`, `high` | `opus`, `xhigh` | `high` | `xhigh` |
+
+Claude Code, `~/.claude/agents/ff-light.md`, and the same for the other two:
+
+```markdown
+---
+name: ff-light
+description: <the "Use for" cell>. Cheapest tier.
+model: haiku
+effort: low
+---
+
+Do only what the prompt asks, in the paths it names. Do not commit or push unless asked. Never print credentials. End with the result and the paths you changed.
+```
+
+Codex, `~/.codex/agents/ff-light.toml`. Keep the user's model and set only the effort, unless the user names a smaller model for light work:
+
+```toml
+name = "ff_light"
+description = "<the Use for cell>. Cheapest tier."
+model_reasoning_effort = "low"
+developer_instructions = """
+Do only what the prompt asks, in the paths it names. Do not commit or push unless asked. Never print credentials. End with the result and the paths you changed.
+"""
+```
+
+The delegation section, in the user's language:
+
+```markdown
+## Delegation
+
+- Keep planning, decisions, and the final check of results in this session.
+- Mechanical checks and lookups go to ff-light, routine work to ff-standard, and reviews of contract or high-risk changes, root causes, and specs to ff-deep. When unsure, use ff-standard.
+- A sub-agent's report is a claim. Read the diff and the output.
+```
+
+On Codex the names are `ff_light`, `ff_standard`, and `ff_deep`. On Pi, drop the tier names and keep the first and last lines.
+
+## 7. Offer notifications and branch protection
 
 If the user wants to hear when long work ends, show them the settings in the README's "Notifications" section. They fill in `~/.ff/notify.env` themselves, because it holds credentials. Then run `ff notify --test`.
 
 If this repository should not take direct commits on its main branch, run `ff protect` here. It applies to one repository, so run it in each one that needs it.
 
-## 7. Report
+## 8. Report
 
-List the tools found, the role assignment, and any downgrade. Mention that third-party marketplaces may not auto-update, so the `update` skill exists for that.
+List the tools found, the role assignment, the session tiers found or added, and any downgrade. Mention that third-party marketplaces may not auto-update, so the `update` skill exists for that.

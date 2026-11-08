@@ -1,6 +1,6 @@
 {
   "name": "forge-flow",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Forge Flow: engineering workflow for coding agents.",
   "license": "MIT",
   "type": "module",

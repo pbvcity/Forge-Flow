@@ -28,11 +28,15 @@ codex plugin add ff@forge-flow
 pi install git:github.com/pbvcity/Forge-Flow
 ```
 
-The command-line tool needs Node 22 or newer. Then run setup once. It finds your tools and models and writes `~/.ff/config.json`.
+The command-line tool needs Node 22 or newer. Then run setup once. It finds your tools and models, writes `~/.ff/config.json`, and offers model tiers for sub-agents, so routine work goes to a cheaper model and reviews to a stronger one. It keeps tiers you already have.
 
 | Claude Code | Codex | Pi |
 |---|---|---|
 | `/ff:setup` | `$ff:setup` | `/ff-setup` |
+
+Then run `ff init` in each project where you will use Forge Flow. It previews the folders and the rules-file section it would add.
+
+If an agent is installing this for you: when the install succeeds, run setup together with the user, then offer `ff init` in the project they work in.
 
 ## Use
 
