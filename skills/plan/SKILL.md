@@ -53,11 +53,12 @@ Not doing: <what is out of scope, and optional items left out>
 
 Record business details you choose in `DECISIONS.md`, not here, so they reach the list the user confirms.
 
-Omit `Executor:` to use `roles.builder`. A task's `Executor:` overrides that default; unknown executors produce a plan note and hold only that task. `roles.fallback` is empty by default. When configured, it handles a task's second attempt only, or becomes the run's builder after a provider limit. Further limits use the existing wait schedule. Reports name the executor used.
+Omit `Executor:` to use `roles.builder`. A task's `Executor:` overrides that default; unknown executors produce a plan note and hold only that task. `roles.fallback` is empty by default. When configured, it becomes the run's builder only after a provider limit; a failed attempt is diagnosed by the reviewer and retried by the same builder. Further limits use the existing wait schedule. Reports name the executor used.
 
 - Each task has at least one `Accept:` command that exits non-zero on failure. Run it now if it can run, so you know it is well formed.
 - Before writing an enum value, status, config key, or field name into a plan or doc, search its source of truth and use the name found there.
 - If only a person can accept something (real device, real money, a look at the page), put it under "Needs a person" with exact steps.
+- A task that changes behavior, a command, or configuration also lists the documents it makes out of date in `Files:`, so the same task updates them.
 - `Files:` decides what can run in parallel, so list every path the task writes. A task without `Files:`, a high-risk task, or one touching repository-wide files such as `package.json` runs serially. `Shared:` names a port, database, or service that two tasks cannot use at once.
 - Put the plan in the planning folder, `planning/PLAN.md` by default, or `planning/<topic>/PLAN.md` for several at once, run with `--plan`. An existing root `PLAN.md` still works.
 - Keep tasks to about 30 minutes each, since a process is stopped at 60. Split where write sets separate, and mark real dependencies only, so tasks can run independently.

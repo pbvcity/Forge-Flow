@@ -19,6 +19,7 @@ import { wait } from './lib/wait.mjs';
 import { cleanup } from './lib/cleanup.mjs';
 import { wt } from './lib/worktree.mjs';
 import { followups } from './lib/followups.mjs';
+import { agents } from './lib/agents.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -27,6 +28,7 @@ const commands = {
   init,
   status: args => status(process.cwd(), args),
   followups,
+  agents: args => agents(args, root),
   stop,
   wait,
   run: args => args.includes('--all') ? runAll(args, root) : runCard(args, root),

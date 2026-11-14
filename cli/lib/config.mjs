@@ -14,10 +14,11 @@ export const promptFileArgs = (cwd, file) => ['Read the entire attached prompt f
 export function configDefaults(home = homedir()) {
   return {
     paths: { planning: 'planning', temp: 'temp', worktrees: '' },
-    roles: { builder: 'host', reviewer: 'host', second: '', fallback: '' },
+    roles: { builder: 'host', reviewer: 'host', second: '', fallback: '', consult: '' },
     executors: { ...builtInExecutors },
     review: { panel: [] },
     cleanup: { keep: 20, days: 30 },
+    agents: { sync: true },
     run: { limitWaitMinutes: [5, 15, 30, 60, 60, 60, 60, 60, 60, 60], maxLanes: 2, laneSetup: '', laneCopy: [] },
     playbook: join(home, '.ff/my-rules.md'),
     update: { repo: 'https://github.com/pbvcity/Forge-Flow.git', timeoutMs: 180000 },
@@ -43,7 +44,7 @@ export function readConfig(cwd = process.cwd(), home = homedir(), warn = console
     }
     for (const [key, item] of Object.entries(value)) {
       if (!Object.hasOwn(config, key)) warn(`${path}: unknown key ${key}`);
-      if (['roles', 'executors', 'review', 'run', 'update', 'cleanup', 'paths'].includes(key)) {
+      if (['roles', 'executors', 'review', 'run', 'update', 'cleanup', 'paths', 'agents'].includes(key)) {
         if (!item || typeof item !== 'object' || Array.isArray(item)) { warn(`${path}: invalid ${key}; using defaults`); continue; }
         for (const [name, setting] of Object.entries(item)) {
           if (key !== 'executors' && !Object.hasOwn(config[key], name)) warn(`${path}: unknown key ${key}.${name}`);

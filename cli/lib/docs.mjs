@@ -60,15 +60,17 @@ export async function docsHints(cwd, base) {
       if (error.code !== 'ENOENT') diagnostics.push(`Docs unavailable (${path}): ${error.message}`);
     }
   }
-  const updates = [], uncovered = [];
+  const updates = [], uncovered = [], staleDocs = new Set();
   for (const file of [...changed].sort()) {
     if (file.startsWith('docs/') || /\.md$/i.test(file)) continue;
     const matches = covering.filter(doc => doc.patterns.some(pattern => pattern.test(file)));
     if (!matches.length) uncovered.push(file);
-    for (const doc of matches) if (!changed.has(doc.path)) updates.push(`update?  ${doc.path}  for ${file}`);
+    for (const doc of matches) if (!changed.has(doc.path)) { updates.push(`update?  ${doc.path}  for ${file}`); staleDocs.add(doc.path); }
   }
-  return { changed: [...changed].sort(), covered: covering.length > 0, updates, uncovered, diagnostics };
+  return { changed: [...changed].sort(), covered: covering.length > 0, updates, staleDocs: [...staleDocs], uncovered, diagnostics };
 }
+
+export const coversSuggestion = 'Link docs to code: add a Covers: line within the first 20 lines of a Markdown file under docs/, for example: Covers: src/api/**, src/db/*.ts';
 
 export async function docs(args, cwd = process.cwd()) {
   try {
@@ -87,6 +89,7 @@ export async function docs(args, cwd = process.cwd()) {
         console.log(`${group}/:`);
         for (const path of paths) console.log(`  ${path}`);
       }
+      console.log(coversSuggestion);
     } else {
       for (const line of result.updates) console.log(line);
       console.log(`no doc covers: ${result.uncovered.length}`);

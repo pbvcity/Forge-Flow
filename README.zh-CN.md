@@ -44,7 +44,7 @@ pi install git:github.com/pbvcity/Forge-Flow
 
 从 `go` 开始，说清你要什么就行。需要走多少流程，由它判断。
 
-无人值守计划可设置 `roles.fallback`，在重试或额度受限时换用备用执行器。任务可用 `Executor:` 指定执行器，报告会注明实际使用者。详见 [CLI 配置](cli/README.md#whole-plans)。
+无人值守计划可设置 `roles.fallback`，它只在额度受限后接手；失败的尝试先经诊断，再由同一执行器重试。任务可用 `Executor:` 指定执行器，报告会注明实际使用者。详见 [CLI 配置](cli/README.md#whole-plans)。
 
 OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角色。`doctor` 会列出可用模型，提示词文件和评审权限的说明见 [setup](skills/setup/SKILL.md)。从桌面图标或编辑器启动的宿主 PATH 往往不全，ff 会在已有 PATH 之后再查找 npm、nvm、Volta、`~/.local/bin` 等常见安装目录。设 `FF_EXTRA_PATH=0` 可只用原有 PATH。
 

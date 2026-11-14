@@ -3,8 +3,7 @@ import { join, resolve } from 'node:path';
 import { readConfig } from './config.mjs';
 import { atomicWrite } from './fsx.mjs';
 import { excludeGitEntries } from './git.mjs';
-import { runProcess } from './proc.mjs';
-import { redactSecrets, resolveReviewer, prepareReviewerPrompt, missingOpencodeAgent } from './review.mjs';
+import { redactSecrets, runReadOnly, missingOpencodeAgent } from './review.mjs';
 import { newId } from './run.mjs';
 import { authFailure } from './failure.mjs';
 
@@ -45,16 +44,14 @@ export async function council(args, cwd = process.cwd()) {
   await excludeGitEntries(cwd, ['**/.ff/councils/']);
   const dir = join(cwd, '.ff/councils', newId());
   const answers = await Promise.all(members.map((member, index) => (async () => {
-    const executor = resolveReviewer(config, member);
+    const { executor, result, fallback } = await runReadOnly(config, member, prompt, cwd, { timeoutMs: options.minutes * 60000, promptPath: join(dir, `${index + 1}-prompt.md`) });
     if (executor.note) return { member, status: 'absent', note: executor.note };
-    const input = prepareReviewerPrompt(executor, prompt, cwd, join(dir, `${index + 1}-prompt.md`));
-    const result = await runProcess(executor.command, executor.args, { cwd, env: executor.env, input, timeoutMs: options.minutes * 60000, idleMs: executor.idleMinutes * 60000 });
     const answered = result.exitCode === 0 && !result.timedOut && !result.error && !result.signal && !(executor.promptFile && missingOpencodeAgent(result.stderr)) && result.stdout.trim();
     const auth = !answered && (authFailure(result.stderr.slice(-2000)) || (result.exitCode !== null && result.exitCode !== 0 && result.stdout.length < 2000 ? authFailure(result.stdout) : ''));
     const note = answered ? undefined : result.idleTimedOut ? `silent for ${executor.idleMinutes} minutes` : result.timedOut ? 'timed out' : /\bENOENT\b/.test(result.error ?? '') ? 'not installed' : auth ? `auth failed: ${auth}` : result.exitCode === 0 && !result.error && !result.signal && !result.stdout.trim() ? 'empty answer' : `failed (exit ${result.exitCode})`;
     const file = join(dir, `${index + 1}-${member.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 70)}.md`);
     atomicWrite(file, redactSecrets(result.stdout + (answered ? '' : `\n${result.stderr}`)));
-    return { member, status: answered ? 'answered' : 'failed', file, note };
+    return { member, status: answered ? 'answered' : 'failed', file, note: [note, fallback].filter(Boolean).join('; ') || undefined };
   })().catch(error => ({ member, status: 'failed', note: error.message }))));
   for (const answer of answers) console.log(`${answer.member}: ${answer.status}${answer.file ? ` — ${answer.file}` : ''}${answer.note ? ` — ${answer.note}` : ''}`);
   if (members.length < 2) console.log('Only one member: this is not an independent view.');

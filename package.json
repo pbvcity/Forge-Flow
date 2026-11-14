@@ -1,6 +1,6 @@
 {
   "name": "forge-flow",
-  "version": "2.2.1",
+  "version": "2.3.0",
   "description": "Forge Flow: engineering workflow for coding agents.",
   "license": "MIT",
   "type": "module",
@@ -16,7 +16,7 @@
     "ff": "cli/ff.mjs"
   },
   "scripts": {
-    "test": "node --test --test-timeout=120000 \"tests/*.test.mjs\""
+    "test": "node --test --import ./tests/test-env.mjs --test-timeout=120000 \"tests/*.test.mjs\""
   },
   "pi": {
     "extensions": [

@@ -35,7 +35,6 @@ function copyLaneEvidence(run, lane, id, state) {
   };
   return {
     ...state,
-    ...(state.reviewPatch ? { reviewPatch: copy(state.reviewPatch) } : {}),
     ...(state.rejectedReview ? { rejectedReview: {
       ...state.rejectedReview,
       adjudication: copy(state.rejectedReview.adjudication),
@@ -124,7 +123,7 @@ export async function runLanes(run, { count, cli, save, checkStop }) {
             try {
               const child = spawn(process.execPath, [cli, 'run', '--all', '--foreground', '--only', pending.tasks.join(','), '--id', pending.childId, '--plan', run.plan, '--timeout-min', String(run.minutes)], {
                 cwd: pending.path, detached: true, windowsHide: true, stdio: ['ignore', fd, fd],
-                env: { ...process.env, FF_LANE: pending.letter, FF_LANE_CONFIG: JSON.stringify(run.config), FF_CHILD: '1' },
+                env: { ...process.env, FF_LANE: pending.letter, FF_LANE_CONFIG: JSON.stringify(run.config), FF_CONSULT_DIR: run.consultDir, FF_CHILD: '1' },
               });
               pending.pid = child.pid;
               child.once('error', error => { pending.error = error.message; pending.status = 'setup-failed'; save(run); });
@@ -332,7 +331,7 @@ export function cleanLane({ cwd, config = {}, lane, runBranch, parentDir }) {
       if (!inside(realpathSync(root), realpathSync(path))) throw new Error('path resolves outside worktree root');
       if (!entry.branch || entry.branch !== lane.branch) throw new Error('lane branch changed');
       const check = async () => {
-        if ((await output(path, ['status', '--porcelain', '--untracked-files=all'])).trim()) throw new Error('dirty worktree');
+        if ((await output(path, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'])).trim()) throw new Error('dirty worktree');
         if (liveRun(join(path, '.ff/runs'))) throw new Error('run process alive');
         if ((await output(path, ['symbolic-ref', '--short', 'HEAD'])).trim() !== entry.branch || (await output(cwd, ['rev-parse', `refs/heads/${entry.branch}`])).trim() !== entry.head) throw new Error('lane branch changed');
         await output(cwd, ['merge-base', '--is-ancestor', entry.head, `refs/heads/${runBranch}`]);

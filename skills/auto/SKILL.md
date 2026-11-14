@@ -23,7 +23,7 @@ It starts in the background and returns at once, so it does not depend on host t
 
 After starting the run, if the host supports background tasks, start `node <this skill's directory>/../../cli/ff.mjs wait` as a host background task. When it returns, read the final status and summary and perform step 6. Exit 0 means complete, 1 means another ending (or no run), and 3 means the optional `--timeout-min <n>` expired; on timeout, use `ff status` and wait again while the run is live. If the host has no background tasks, end the turn and use `ff status` in a later session.
 
-For each task it starts a clean process, runs acceptance itself, and commits on a run branch. A failed task is parked on a branch and the rest carry on. A stuck task goes to a clean lead process, which may narrow or split it. A provider limit pauses the run. Contract and high tasks are reviewed. It never pushes or goes live.
+For each task it starts a clean process, runs acceptance itself, and commits on a run branch. When a task fails its first attempt, the reviewer diagnoses it read-only and the same builder tries again with the diagnosis. If the cause stays unclear, `roles.consult` is asked when it is set, at most 2 times per run; without it the task is parked. A task whose environment is at fault is held with the reason in its note. After 3 attempts, or when the spec is at fault, the task is parked on a branch and the rest carry on. A parked or stuck task goes to a clean lead process on the reviewer's model, which may narrow or split it. A provider limit pauses the run, or hands it to `roles.fallback` when that is set; nothing else changes the executor. Contract and high tasks are reviewed. It never pushes or goes live.
 
 When several tasks declare disjoint `Files:`, run them in parallel:
 
@@ -42,7 +42,7 @@ In any new session, on any host:
 node <this skill's directory>/../../cli/ff.mjs status
 ```
 
-Then read `PLAN.md` and `git log`, and check open PRs and worktrees before starting anything. If a run is live, leave its worktree alone; editing `PLAN.md` is how to change course mid-run. If it ended, read `.ff/runs/<id>/summary.md`. Decide what to do about failed and held tasks, edit the plan if needed, and run again: done tasks are skipped and failed tasks get a fresh try.
+Then read `PLAN.md` and `git log`, and check open PRs and worktrees before starting anything. If a run is live, leave its worktree alone; editing `PLAN.md` is how to change course mid-run. If it ended, read `.ff/runs/<id>/summary.md`. Its task rows name the ladder each task went through, such as `diagnosed: slip; consulted: slip; 3 attempts`, and the diagnosis and consult files under `.ff/runs/<id>/`. Decide what to do about failed and held tasks, edit the plan if needed, and run again: done tasks are skipped and failed tasks get a fresh try.
 
 ## 4. Without the tool
 
@@ -57,7 +57,8 @@ If `ff run` is missing or fails, do not block. Work through the tasks here, in o
 
 - Environment flake: retry once, unchanged.
 - Tool problem: fix it once.
-- Product defect: fix once. When the same premise has failed twice, stop that task, record the premise and the evidence in `PLAN.md`, and go on with tasks that do not depend on it.
+- Product defect: have the read-only `ff-diagnose` sub-agent (`ff:ff-diagnose` in Claude Code, `ff_diagnose` in Codex) name the cause from the task, the acceptance output, and the diff, then let the same executor fix once with that diagnosis. When the cause stays unclear or the same premise has failed twice, stop that task, record the premise and the evidence in `PLAN.md`, and go on with tasks that do not depend on it.
+- Provider limit: switch to `roles.fallback` when it is set, otherwise wait. A failed attempt never changes the executor.
 - Unsafe action or a stop from "When to stop": skip that task, record it, continue with the rest.
 
 ## 6. Finish
@@ -68,8 +69,12 @@ Read `.ff/runs/<id>/summary.md`, the commits, and the diff. Routine tasks are no
 
 Run the project's checks before closing the branch: run commits skipped git hooks, so passing task acceptance alone is not enough. Fix failures and rerun the affected checks, then follow [build step 5](../build/SKILL.md#5-verify-and-close) under the project's rules: push the work branch, open a PR, and read the CI result before calling it finished. Follow that step's no-remote path when applicable. The tool itself still never pushes or merges.
 
+After the PR merges, run `ff wt clean --apply` and `ff cleanup --apply` without asking: they delete only what is proven merged or expired. Anything they list but keep is for the user to decide.
+
 Going live and open items in `DECISIONS.md` follow the playbook: continue development, record provisional business decisions, and wait for confirmation of each open item the release carries before going live.
 
 When a plan is finished, `ff archive` moves it to `<planning folder>/done/`.
 
 Leave one summary for the user: what got done, every open item in `DECISIONS.md` for them to confirm one by one, what needs them (with steps), what they may want changed, and the state of the exit condition.
+
+The user does not read `summary.md`; you do. If it has a `## Needs your look` section, copy every item from it into that summary verbatim, each with its task id, as its own short list. Never replace them with a pointer to `summary.md`.

@@ -40,7 +40,11 @@ node <this skill's directory>/../../cli/ff.mjs run <card file>
 
 If `ff run` is missing or fails, use a host sub-agent with the same card. If the host has none, do the task here. Note which one happened. Do not block on the tool.
 
+For read-only reads of a result, the plugin ships two agents: `ff:ff-review` and `ff:ff-diagnose` on Claude Code, and `ff_review` and `ff_diagnose` on Codex (synced by `ff` into `~/.codex/agents/`, read-only by instruction only). Give them the diff or patch path and the evidence, never a request to change files.
+
 The exit code is not the result. After any dispatch, read the real diff and rerun acceptance yourself.
+
+If a dispatched task fails, do not retry blind. Have the read-only `ff-diagnose` sub-agent (`ff:ff-diagnose` in Claude Code, `ff_diagnose` in Codex; elsewhere a read-only sub-agent with the same inputs) read the card, the acceptance output, and the diff and name the cause. Then dispatch the same executor again with that diagnosis on the card. Change executor only after a provider limit. At most 3 attempts; then hold the task and say why.
 
 ## 4. Audit
 
@@ -58,6 +62,6 @@ Meet the verification row for the tier. Then:
 
 1. Update docs that the change made wrong: `node <this skill's directory>/../../cli/ff.mjs docs` lists candidates from the changed files. Do small follow-ups now. On contract or high work, put each dated "Next look" into the repository's `FOLLOWUPS.md` as `- [ ] YYYY-MM-DD What to check. Evidence: <command or where to look>`. Later checks stay open until their evidence is gathered and reported.
 2. Hand to the `review` skill for contract and high. For routine, the lead decides as "Risk tiers" describes.
-3. After a branch merges, remove its worktree: `ff wt clean` shows what can go, and `--apply` removes it.
+3. After a branch merges, run `ff wt clean --apply` and `ff cleanup --apply` without asking: they delete only worktrees, `ff/*` branches, and old records proven merged or expired. Items they list but keep (branches outside `ff/`, stale `ff/failed/*`, old `temp/` entries) are the user's decision.
 4. If the repository has a remote, close through its normal flow: work branch, commit, PR, CI. Read the CI result before calling it finished. Without a remote, leave the changes in the working tree unless the user asked for commits, and say so.
-5. End your report with what changed, what you ran with real results, what you skipped or left unchecked, the remaining risk, and every open item in `DECISIONS.md` for the user to confirm one by one. Going live waits until the user has confirmed the items the release carries.
+5. End your report with what changed, what you ran with real results, what you skipped or left unchecked, the remaining risk, and every open item in `DECISIONS.md` for the user to confirm one by one. Going live waits until the user has confirmed the items the release carries. If a run's `.ff/runs/<id>/summary.md` has a `## Needs your look` section, copy every item from it into the report verbatim, each with its task id, as its own short list; never only point to `summary.md`.

@@ -36,13 +36,15 @@ Who leads reviews? The default is the current model, since it holds the full con
 
 The lead reads every reviewer and decides. Missing models downgrade the workflow and never block it.
 
+`roles.fallback` is optional. It takes over only when the builder hits a provider limit, never a second attempt. `roles.consult` is optional: name the strongest model available, such as Fable, as an executor name or a `pi:` or `opencode:` role. It runs read-only and is asked only when the reviewer's diagnosis of a failed task is unclear, at most 2 times per run.
+
 ## 4. Write the file
 
 Write `~/.ff/config.json`. A project may override it in `.ff/config.json`. If the file exists, add missing keys and leave the user's values alone.
 
 ```json
 {
-  "roles": { "builder": "claude", "reviewer": "codex", "second": "" },
+  "roles": { "builder": "claude", "reviewer": "codex", "second": "", "fallback": "", "consult": "" },
   "executors": {
     "<name>": { "cmd": "<headless command>", "profile": "generic" }
   },
@@ -56,7 +58,7 @@ Write `~/.ff/config.json`. A project may override it in `.ff/config.json`. If th
 - On a multi-model host, a role can name a model directly: `pi:<vendor>/<model>:<effort>`.
 - OpenCode roles use `opencode:<provider>/<model>` for builders, reviewers, and council advisers. Prompts stay in the run/review/council directory and travel through `--file`; `--dir` is the project root. The message asks the model to read through EOF using offsets when truncated and follow the file's final instructions. No real model is called during detection.
 - OpenCode reviews and council advisers select `ff-review`, defined for that child process through `OPENCODE_CONFIG_CONTENT` (OpenCode V1 agent configuration). Its permissions deny every tool except read, grep, glob, and list. No agent installation or user-config write is needed. This replaces inline config for that child process; ordinary user/project files still load. An unavailable agent marks the reviewer or adviser failed, with no review verdict. Builders keep their existing OpenCode permissions. See the [OpenCode configuration source](https://github.com/anomalyco/opencode/blob/v1.2.27/packages/opencode/src/config/config.ts) for the V1 format.
-- Reviewers run read-only. `claude`, `codex`, `pi:`, and `opencode:` roles get this automatically. Other executors need `reviewArgs`.
+- Reviewers and consults run read-only. `claude`, `codex`, `pi:`, and `opencode:` roles get this automatically. Other executors need `reviewArgs`.
 - Credentials never go in this file.
 
 Create `~/.ff/my-rules.md` only if the user has rules to add. Do not overwrite one.
@@ -79,11 +81,11 @@ If tiers exist, report them and change nothing. Otherwise ask one question: lean
 
 | Tier | Use for | Claude Code, lower cost | Claude Code, quality | Codex effort, lower cost | Codex effort, quality |
 |---|---|---|---|---|---|
-| `ff-light` | Counts, file checks, list comparisons, format conversion, simple searches | `haiku`, `low` | `sonnet`, `low` | `low` | `medium` |
+| `ff-light` | Counts, file checks, list comparisons, format conversion, simple searches | `haiku`, `low` | `haiku`, `medium` | `low` | `medium` |
 | `ff-standard` | Routine implementation, doc sync, summaries, reconciling sources | `sonnet`, `medium` | `sonnet`, `high` | `medium` | `high` |
 | `ff-deep` | Reviews of contract or high-risk changes, root causes, specs | `opus`, `high` | `opus`, `xhigh` | `high` | `xhigh` |
 
-Claude Code, `~/.claude/agents/ff-light.md`, and the same for the other two:
+Claude Code, `~/.claude/agents/ff-light.md`, and the same for the other two without the two light-tier sentences:
 
 ```markdown
 ---
@@ -93,7 +95,7 @@ model: haiku
 effort: low
 ---
 
-Do only what the prompt asks, in the paths it names. Do not commit or push unless asked. Never print credentials. End with the result and the paths you changed.
+Do only what the prompt asks, in the paths it names. Do not commit or push unless asked. Never print credentials. End with the result and the paths you changed. Read only the files and ranges the prompt names; if the task needs wide reading or judgment, stop and say it is beyond the light tier. Cite the source of each finding as file:line so the main session can check it.
 ```
 
 Codex, `~/.codex/agents/ff-light.toml`. Keep the user's model and set only the effort, unless the user names a smaller model for light work:
@@ -103,7 +105,7 @@ name = "ff_light"
 description = "<the Use for cell>. Cheapest tier."
 model_reasoning_effort = "low"
 developer_instructions = """
-Do only what the prompt asks, in the paths it names. Do not commit or push unless asked. Never print credentials. End with the result and the paths you changed.
+Do only what the prompt asks, in the paths it names. Do not commit or push unless asked. Never print credentials. End with the result and the paths you changed. Read only the files and ranges the prompt names; if the task needs wide reading or judgment, stop and say it is beyond the light tier. Cite the source of each finding as file:line so the main session can check it.
 """
 ```
 

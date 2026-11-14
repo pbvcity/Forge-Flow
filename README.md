@@ -42,7 +42,7 @@ If an agent is installing this for you: when the install succeeds, run setup tog
 
 Start with `go` and describe what you want. It picks how much process the work needs.
 
-For unattended plans, set `roles.fallback` to retry with another executor or switch after a provider limit. An optional `Executor:` task line selects its builder. Reports name the executor used; see [CLI configuration](cli/README.md#whole-plans).
+For unattended plans, `roles.fallback` takes over only after a provider limit; a failed attempt is diagnosed and retried by the same builder. An optional `Executor:` task line selects its builder. Reports name the executor used; see [CLI configuration](cli/README.md#whole-plans).
 
 | Claude Code | Codex | Pi | What it does |
 |---|---|---|---|
@@ -54,6 +54,13 @@ For unattended plans, set `roles.fallback` to retry with another executor or swi
 | `/ff:design` | `$ff:design` | `/ff-design` | Sets a visual direction and builds the project's design system. |
 | `/ff:council` | `$ff:council` | `/ff-council` | Asks several model families about a hard decision. |
 | `/ff:update` | `$ff:update` | `/ff-update` | Updates through each host's own updater. |
+
+## Read-only agents
+
+The plugin ships two read-only sub-agents for the main session to call: `ff-review` reads a diff or patch and ends with `VERDICT: PASS` or `VERDICT: FAIL`; `ff-diagnose` reads a failed attempt and ends with `DIAGNOSIS: SLIP`, `ENVIRONMENT`, `SPEC`, or `UNCLEAR`. Both follow the playbook and can only read, grep, and glob.
+
+- **Claude Code** loads them from the plugin as `ff:ff-review` and `ff:ff-diagnose`. After a plugin update they appear in a new session or after `/reload-plugins`.
+- **Codex** cannot load agents from a plugin, so `ff run`, `ff review`, and `ff doctor` write `ff_review` and `ff_diagnose` into `~/.codex/agents/` when `~/.codex` exists; `ff agents` previews and `ff agents --apply` writes them. A file you edit (first marker line removed) is left alone. Codex agents inherit the session's permissions, so read-only there is an instruction, not an enforcement: a review that must be enforced read-only still goes through `ff review`. Set `agents.sync` to `false` to turn the automatic sync off.
 
 ## How it decides
 
@@ -152,7 +159,7 @@ A missing model downgrades the workflow and never blocks it. On Pi, one tool rea
 
 Project settings go in `.ff/config.json`, which overrides `~/.ff/config.json` for roles and builders. Review and council use only built-in executors and executor definitions from `~/.ff/config.json`; project `executors` cannot change the commands or arguments they run. A member defined only in the project is reported as absent with migration instructions. `ff doctor` lists those project definitions and their scope.
 
-ff does not take review or council commands and arguments from repository configuration. Its automatic Claude reviewer arguments include `--setting-sources user --strict-mcp-config`, excluding repository `.claude/settings*.json` (including hooks) and project MCP servers; user-configured `reviewArgs` still take priority. OpenCode, Pi, Codex, and other reviewer tools may still load repository project configuration, plugins, or extensions themselves, so inspect the repository for these files before reviewing untrusted code. This does not make `ff run` safe in an untrusted repository: project builders and the plan's `Accept:` commands still execute. Your own rules go in `~/.ff/my-rules.md`. See [cli/README.md](cli/README.md) for the tool.
+ff does not take review or council commands and arguments from repository configuration. Reviewers stay read-only. Claude reviewers run with `--restricted --tools Read,Grep,Glob,Bash --permission-mode dontAsk --strict-mcp-config`: they can run read-only commands such as `git log`, `git show`, `git blame`, and `git diff`, anything that would need approval (writes, redirection) is denied, and no user, project, or local settings, hooks, or MCP servers load. Only your `model`, `effortLevel`, `env`, and login helper settings (`apiKeyHelper`, `awsAuthRefresh`, `awsCredentialExport`, `gcpAuthRefresh`, `proxyAuthHelper`) are carried over, from your settings and any `--settings` in the executor command; permissions, hooks, plugins, and MCP servers never are. A Claude Code without `--restricted` is rerun with file tools only. Codex reviewers run in its read-only sandbox. Pi reviewers run with other extensions disabled, file tools, and ff's `git_read` tool, which runs only allowlisted read-only git commands without a shell. OpenCode reviewers keep file tools only. User-configured `reviewArgs` still take priority. OpenCode, Pi, Codex, and other reviewer tools may still load repository project configuration, plugins, or extensions themselves, so inspect the repository for these files before reviewing untrusted code. This does not make `ff run` safe in an untrusted repository: project builders and the plan's `Accept:` commands still execute. Your own rules go in `~/.ff/my-rules.md`. See [cli/README.md](cli/README.md) for the tool.
 
 ## Update
 

@@ -47,10 +47,12 @@ For each blocking finding, the lead picks one and records why:
 
 Ask of each: what loss does this prevent, and what does it cost when it misfires? Judge the argument, not who made it. A rare case that needs a heavy guard goes on the known-accepted list.
 
+When the lead rejects or defers a finding without high confidence, it lists that finding in its report to the user as a "needs your look" item: what the issue is, where (`file:line` if known), and why it is uncertain.
+
 ## Second reviewer and panels
 
 - The second family has no vote, and every one of its findings gets a response.
-- In unattended `ff run --all`, a usable PASS from `roles.reviewer` lets a fresh read-only lead process adjudicate other members' FAIL findings before retrying: BLOCK (also failure, timeout, or an unparseable conclusion) spends an attempt; REJECT proceeds and records the decision under `Rejected review findings` in the run summary. A lead FAIL or no usable lead PASS keeps the usual failed attempt; manual `ff review` is unchanged.
+- In unattended `ff run --all`, a usable PASS from `roles.reviewer` lets a fresh read-only lead process adjudicate other members' FAIL findings before retrying: BLOCK (also failure, timeout, or an unparseable conclusion) spends an attempt; REJECT proceeds and lists low-confidence rejections and other findings the lead flags under `Needs your look` in the run summary. A lead FAIL or no usable lead PASS keeps the usual failed attempt; manual `ff review` is unchanged.
 - A panel runs in parallel in the first round only. Members cannot see each other's results.
 - A member who times out or is missing is noted and does not affect the others.
 - Agreement is a strong signal. If results diverge widely, the spec is underspecified: fix it and rerun rather than averaging.
@@ -115,8 +117,9 @@ Keep known-accepted items in `REVIEW.md`, and feed them to the next review so th
 ```markdown
 Find problems that would cause real loss. You are not proving the code perfect.
 Known accepted, do not raise: <path>
-Input: <diff or range>. Acceptance criteria: <path>. Read-only.
+Input: <brief, inventory, and patch path>. Read the hunks you need from the patch and the code from the files. Acceptance criteria: <path>. Read-only.
 Follow <path to this file> for finding format, severity caps, and required sections.
 Do not write up anything without a real scenario and a loss.
+Before the last line, write `Not read:` with the changed files you did not read, comma-separated, or `Not read: none`.
 Last line: VERDICT: PASS or VERDICT: FAIL. FAIL if any BLOCKER or HIGH remains.
 ```

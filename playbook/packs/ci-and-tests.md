@@ -71,3 +71,24 @@ Parallel jobs that share a database, cache, port, or temp directory will collide
 - A check true only at one moment, such as a commit or a date, stays out of the regular suite.
 - Keep reverse proofs, where you remove a fix to see a test fail, as one-time evidence. A mutation chain does not belong in the daily suite.
 - Evidence goes in as small text receipts. Screenshots and full logs stay out of git.
+
+## When to review the test process
+
+The suite and the gates around it are code too, and they drift. Look at the process itself, once, when any of these holds:
+
+- The project has run for more than a week, or about ten batches of work.
+- One merge check takes about an hour or more, or waiting is plainly longer than developing.
+- The same kind of problem surfaces only in the full run for the second time.
+- Occasional failures under full load keep needing a person to judge them.
+- Three or more batches run in parallel and rebase conflicts keep coming back.
+
+What to do:
+
+- Move checks earlier. A problem that only the full run catches, but a check of tens of seconds would find, belongs in the quick check before handing work in.
+- Decide by the scope of the change whether the slowest verification runs at all.
+- Give tests their own resources (ports, databases, temp directories) before running them in parallel.
+- Batch several pieces of work and run the full suite once for all of them.
+- Delete checks that were true only at one moment, duplicate tests, and tests that copy the implementation. Write one reason per deletion.
+- Judge by the real durations and the rework causes of the last few batches, not by how it feels.
+
+`ff run --all` helps spot this: its summary notes when every task passed its own acceptance but the exit condition failed, and lists acceptance commands over 10 minutes or an exit condition over 30 minutes.

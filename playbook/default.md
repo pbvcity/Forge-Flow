@@ -110,6 +110,8 @@ Classify first.
 | Environment | Network, load, busy port | Retry once unchanged, do not count it |
 | Product defect | Everything else | Fix once, then see below |
 
+In an `ff run`, the tool runs a ladder of its own: the reviewer diagnoses the first failure read-only as a slip, the environment, the spec, or unclear; the same builder retries with the diagnosis; `roles.consult`, when set, is asked for an unclear cause, at most 2 times per run; the task is held for an environment problem, and parked for a spec problem or after 3 attempts, where a lead on the reviewer's model replans. `roles.fallback` changes the executor only after a provider limit. In a session, a read-only `ff-diagnose` sub-agent does the diagnosis before the same executor retries.
+
 When two fixes sharing one premise have failed, suspect the premise. Write it down, find an observation that tells the cases apart, then act. Choose the smallest structural fix, a different approach or executor, a narrower feature, or a recorded known limitation. Go to the user only for items under "When to stop".
 
 An optional model judgment that fails or times out is marked absent; the run still succeeds if its deterministic work is done. Fail a run only for real missing data. When a check misfires in production, downgrade it first, then fix it.

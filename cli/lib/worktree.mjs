@@ -4,7 +4,7 @@ import { readConfig } from './config.mjs';
 import { jsonFile } from './fsx.mjs';
 import { git } from './git.mjs';
 import { isAlive, runProcess } from './proc.mjs';
-import { tempDir, worktreeRoot } from './paths.mjs';
+import { realPath, samePath, tempDir, worktreeRoot } from './paths.mjs';
 
 const protectedName = /backup|bak|备份/i;
 const secretName = /^(?:\.env(?:\..*)?|.*\.(?:pem|key)|credentials.*)$/i;
@@ -44,6 +44,33 @@ export async function mergedProof(cwd, branch, tip, context = null) {
   if (base && (await git(cwd, ['merge-base', '--is-ancestor', tip, base])).exitCode === 0) return { merged: true, proof: `ancestor of ${base}` };
   if (!remote && base && (await git(cwd, ['diff', '--quiet', base, tip, '--'])).exitCode === 0) return { merged: true, proof: `identical tree to ${base} (no remote)` };
   return { merged: false, proof: base ? 'unmerged' : 'default branch unknown' };
+}
+
+// A detached worktree has no branch and no PR: only ancestry of the default branch proves it merged.
+export async function detachedProof(cwd, tip, context = null) {
+  const { base } = context ?? await mergeContext(cwd);
+  if (!base) return { merged: false, proof: 'default branch unknown' };
+  if ((await git(cwd, ['merge-base', '--is-ancestor', tip, base])).exitCode === 0) return { merged: true, proof: `detached head, ancestor of ${base}` };
+  return { merged: false, proof: 'detached head not in default branch' };
+}
+
+// Reading status for a check must not take the worktree's index.lock.
+const readStatus = ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'];
+const operations = ['rebase-merge', 'rebase-apply', 'BISECT_LOG', 'MERGE_HEAD', 'CHERRY_PICK_HEAD', 'REVERT_HEAD'];
+
+// Work a clean status does not show: an operation in progress, or, for a detached head,
+// commits its HEAD reflog visited that no ref keeps. Removing the worktree would lose them.
+export async function unsavedWork(path, detached) {
+  const paths = (await checked(path, ['rev-parse', ...operations.flatMap(name => ['--git-path', name])])).split(/\r?\n/);
+  const busy = operations.find((name, index) => paths[index] && existsSync(resolve(path, paths[index])));
+  if (busy) return `operation in progress (${busy})`;
+  if (!detached) return '';
+  const visited = [...new Set((await checked(path, ['log', '-g', '--format=%H', 'HEAD'])).split(/\r?\n/).filter(Boolean))];
+  if (!visited.length) return '';
+  const lost = await git(path, ['rev-list', '--stdin', '--not', '--all'], { input: `${visited.join('\n')}\n` });
+  if (lost.exitCode !== 0 || lost.outputTruncated) throw new Error(`reflog check failed: ${failure(lost)}`);
+  const commits = lost.stdout.trim().split(/\r?\n/).filter(Boolean);
+  return commits.length ? `${commits.length} commit(s) only in its HEAD reflog, such as ${commits[0].slice(0, 8)}` : '';
 }
 
 // A worktree on another drive than the archive cannot be renamed into it.
@@ -120,7 +147,7 @@ export async function archiveIgnored(path, archive, temp, apply, runsArchive) {
 export async function wt(args = [], cwd = process.cwd()) {
   const [command, ...options] = args;
   if (!['new', 'list', 'clean'].includes(command)) throw new Error('usage: ff wt new <slug> [--from <ref>] | list | clean [--apply]');
-  cwd = realpathSync(await checked(cwd, ['rev-parse', '--show-toplevel']));
+  cwd = realPath(await checked(cwd, ['rev-parse', '--show-toplevel']));
   const { config } = readConfig(cwd);
   const root = worktreeRoot(cwd, config);
   if (command === 'new') {
@@ -145,21 +172,21 @@ export async function wt(args = [], cwd = process.cwd()) {
   if (options.length && !(command === 'clean' && options.length === 1 && options[0] === '--apply')) throw new Error(`Unknown wt ${command} option: ${options.join(' ')}`);
   const apply = options.includes('--apply');
   const entries = await listWorktrees(cwd), context = await mergeContext(cwd);
-  const current = realpathSync(await checked(cwd, ['rev-parse', '--show-toplevel']));
+  const current = await checked(cwd, ['rev-parse', '--show-toplevel']);
   for (const entry of entries) {
     const { path, branch, head } = entry;
-    const managed = inside(root, path);
+    // Compared expanded: a configured root may carry Windows short names while git lists long ones.
+    const managed = inside(realPath(root), realPath(path));
     try {
       if (command === 'clean') {
         if (!managed) { console.log(`Kept ${path}: outside worktree root`); continue; }
-        if (path === entries[0].path || realpathSync(path) === current) { console.log(`Kept ${path}: main or current worktree`); continue; }
+        if (path === entries[0].path || samePath(path, current)) { console.log(`Kept ${path}: main or current worktree`); continue; }
         if (protectedName.test(path)) throw new Error('backup name');
         noLinks(path, root);
-        if (!inside(realpathSync(root), realpathSync(path))) throw new Error('path resolves outside worktree root');
-        if (!branch) throw new Error('detached HEAD');
+        if (!inside(realpathSync.native(root), realpathSync.native(path))) throw new Error('path resolves outside worktree root');
       }
-      const status = await checked(path, ['status', '--porcelain', '--untracked-files=all']);
-      const proof = await mergedProof(cwd, branch, head, context);
+      const status = await checked(path, readStatus);
+      const proof = branch ? await mergedProof(cwd, branch, head, context) : await detachedProof(cwd, head, context);
       if (command === 'list') {
         console.log(`${managed ? '*' : '-'} ${path}  ${branch || '(detached)'}  ${head}  ${status ? 'dirty' : 'clean'}  ${proof.merged ? 'merged: ' : ''}${proof.proof}`);
         continue;
@@ -167,18 +194,23 @@ export async function wt(args = [], cwd = process.cwd()) {
       if (status) throw new Error('dirty (tracked changes or untracked files)');
       if (liveRun(join(path, '.ff/runs'))) throw new Error('run process alive');
       if (!proof.merged) throw new Error(proof.proof);
+      const unsaved = await unsavedWork(path, !branch);
+      if (unsaved) throw new Error(unsaved);
       const temp = tempDir(cwd, config), archive = join(temp, 'worktree-archive', relative(root, path));
       const kept = await archiveIgnored(path, archive, temp, apply);
       if (kept.length) throw new Error(kept.join('; '));
       if (apply) {
         // Recheck after PR lookup and archiving, before any deletion.
-        if (await checked(path, ['status', '--porcelain', '--untracked-files=all'])) throw new Error('worktree became dirty');
+        if (await checked(path, readStatus)) throw new Error('worktree became dirty');
+        const late = await unsavedWork(path, !branch);
+        if (late) throw new Error(late);
         if (liveRun(join(path, '.ff/runs')) || liveRun(join(archive, '.ff/runs'))) throw new Error('run process alive');
-        if (await checked(path, ['symbolic-ref', '--short', 'HEAD']) !== branch) throw new Error('checked-out branch changed');
-        if (await checked(path, ['rev-parse', 'HEAD']) !== head || await checked(cwd, ['rev-parse', `refs/heads/${branch}`]) !== head) throw new Error('branch tip changed');
+        const symbolic = await git(path, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+        if (branch ? symbolic.stdout.trim() !== branch : symbolic.exitCode === 0) throw new Error('checked-out branch changed');
+        if (await checked(path, ['rev-parse', 'HEAD']) !== head || (branch && await checked(cwd, ['rev-parse', `refs/heads/${branch}`]) !== head)) throw new Error('branch tip changed');
         await checked(cwd, ['worktree', 'remove', '--', path]);
         console.log(`Removed ${path} (${proof.proof})`);
-        const deleted = await git(cwd, ['update-ref', '-d', `refs/heads/${branch}`, head]);
+        const deleted = branch ? await git(cwd, ['update-ref', '-d', `refs/heads/${branch}`, head]) : { exitCode: 0 };
         if (deleted.exitCode !== 0) console.error(`Kept branch ${branch}: ${failure(deleted)}`);
         const pruned = await git(cwd, ['worktree', 'prune']);
         if (pruned.exitCode !== 0) console.error(`Worktree prune failed: ${failure(pruned)}`);

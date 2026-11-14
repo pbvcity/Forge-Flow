@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
+import { autoSyncAgents } from './agents.mjs';
 import { acquireLock, releaseLock, atomicWrite, read, jsonFile } from './fsx.mjs';
 import { isAlive, runProcess, shellCommand, commandTemplate } from './proc.mjs';
 import { excludeGitEntries } from './git.mjs';
@@ -58,7 +59,7 @@ function elapsed(since) {
   return minutes < 1 ? 'under a minute' : `${minutes} min`;
 }
 
-export function status(cwd = process.cwd(), args = []) {
+export async function status(cwd = process.cwd(), args = []) {
   let explicit;
   for (let i = 0; i < args.length; i++) {
     if (args[i] !== '--plan') throw new Error(`Unknown status option: ${args[i]}`);
@@ -113,6 +114,12 @@ export function status(cwd = process.cwd(), args = []) {
   for (const note of plan?.notes ?? []) console.log(note);
   if (run?.kind === 'plan' && existsSync(join(cwd, '.ff/runs', run.id, 'summary.md'))) console.log(`Report: ${join('.ff/runs', run.id, 'summary.md')}`);
   for (const line of decisionLines(cwd)) console.log(line);
+  // Offline cleanup hint; any failure stays silent so status keeps its output and exit code.
+  try {
+    const { cleanupHint } = await import('./cleanup.mjs');
+    const hint = await cleanupHint(cwd);
+    if (hint) console.log(hint);
+  } catch {}
 }
 
 export function workerPrompt(card, builder, root, cwd, config) {
@@ -154,7 +161,7 @@ export async function attempt({ builder, prompt, commands, cwd, dir, minutes, on
     const checked = await runProcess(shell.command, shell.args, { cwd, timeoutMs });
     const output = `${checked.stdout}\n${checked.stderr}`;
     write(`accept-${result.acceptance.length + 1}.txt`, output);
-    result.acceptance.push({ command: text, passed: checked.exitCode === 0 && !checked.timedOut && !checked.error, exitCode: checked.exitCode, output: output.slice(-3000) });
+    result.acceptance.push({ command: text, passed: checked.exitCode === 0 && !checked.timedOut && !checked.error, exitCode: checked.exitCode, durationMs: checked.durationMs, output: output.slice(-3000) });
     if (checked.timedOut && checked.killedTree !== true) { result.treeUnconfirmed = true; result.pid = checked.pid; break; }
   }
   const failed = result.acceptance.filter(item => !item.passed);
@@ -174,6 +181,7 @@ export async function runCard(args, root, cwd = process.cwd()) {
   if (!(minutes > 0 && Number.isFinite(minutes))) throw new Error('--timeout-min must be a positive number');
   const card = readFileSync(resolve(cwd, file), 'utf8');
   const { config } = readConfig(cwd);
+  autoSyncAgents(config);
   const builder = resolveBuilder(config);
   if (!builder.cmd) { console.error(builder.note); return 1; }
   const lock = acquireLock(join(cwd, '.ff/run.lock'), force);
@@ -189,7 +197,7 @@ export async function runCard(args, root, cwd = process.cwd()) {
     const result = await attempt({ builder, prompt: workerPrompt(card, builder, root, cwd, config), commands: acceptanceCommands(card), cwd, dir, minutes, onPid: pid => save({ status: 'running', current: title, executorPid: pid }) });
     const state = { passed: 'done', failed: 'failed', blocked: 'blocked', unverified: 'unverified' }[result.status];
     const note = `${title}: ${state}${result.note ? ` — ${result.note}` : ''}`;
-    save({ status: state, note, acceptance: result.acceptance.map(({ command, exitCode, passed }) => ({ command, exitCode, passed })), ...(result.treeUnconfirmed ? { executorPid: result.pid } : {}) });
+    save({ status: state, note, acceptance: result.acceptance.map(({ command, exitCode, passed, durationMs }) => ({ command, exitCode, passed, durationMs })), ...(result.treeUnconfirmed ? { executorPid: result.pid } : {}) });
     console.log(`${id}: ${note} — ${dir}`);
     return ['passed', 'unverified'].includes(result.status) ? 0 : 1;
   } finally { releaseLock(lock); }

@@ -9,6 +9,7 @@ import { updateStatus } from './update.mjs';
 import { notifyChannels, notifySettings } from './notify.mjs';
 import { protectionState } from './protect.mjs';
 import { initState } from './init.mjs';
+import { agentsStatus, autoSyncAgents } from './agents.mjs';
 
 export function modelFamily(model, vendor) {
   if (/gpt|codex|^o[134](?:-|$)/i.test(model)) return 'openai';
@@ -59,10 +60,11 @@ export async function doctor(cwd = process.cwd()) {
   const families = new Set();
   const names = ['git', 'claude', 'codex', 'pi', 'opencode', 'grok'];
   const { config, found } = readConfig(cwd);
+  autoSyncAgents(config);
   const roleCommands = new Map();
   for (const [role, selected] of Object.entries(config.roles)) {
     if (!selected) continue;
-    const reviewing = role === 'reviewer' || role === 'second';
+    const reviewing = ['reviewer', 'second', 'consult'].includes(role);
     const executor = reviewing ? resolveReviewer(config, selected, { quiet: true }) : resolveBuilder(config, selected);
     const command = reviewing ? executor.command : executor.cmd ? invocation(executor).command : undefined;
     if (!command) {
@@ -102,7 +104,7 @@ export async function doctor(cwd = process.cwd()) {
   }
   console.log(`Config: ${found.length ? found.join(', ') : 'not found (defaults)'}`);
   if (config.projectExecutors.length) console.log(`Project executors: ${config.projectExecutors.join(', ')} (builders use these definitions; review and council ignore them)`);
-  const impacts = { builder: 'ff run cannot build', reviewer: 'ff review cannot run the configured reviewer', second: 'ff review cannot run the second reviewer', fallback: 'ff run cannot use the fallback' };
+  const impacts = { builder: 'ff run cannot build', reviewer: 'ff review cannot run the configured reviewer', second: 'ff review cannot run the second reviewer', fallback: 'ff run cannot use the fallback', consult: 'ff run cannot consult on unclear failures' };
   for (const [role, command] of roleCommands) {
     const result = results[names.indexOf(command)];
     if (result.exitCode !== 0 || result.timedOut) console.log(`${role} uses ${command}, which ${result.timedOut ? 'did not respond' : 'is not installed'}: ${impacts[role] || `the ${role} role cannot run`}`);
@@ -113,10 +115,15 @@ export async function doctor(cwd = process.cwd()) {
   console.log(`Model families: ${families.size} (inferred from CLI/model names; availability is not authentication)`);
   await updateStatus(cwd, config);
   console.log(`Session tiers: ${sessionTiers()}`);
+  console.log(`Codex agents: ${agentsStatus()}`);
   console.log(`Notifications: ${notifyChannels(notifySettings()).join(', ') || 'off'}`);
   console.log(`Branch protection: ${await protectionState(cwd)}`);
   const builder = resolveBuilder(config);
   console.log(`Fallback: ${config.roles.fallback || 'none'}${config.roles.fallback && !resolveBuilder(config, config.roles.fallback).cmd ? ' (unavailable)' : ''}`);
+  const consult = config.roles.consult;
+  const consultCommand = roleCommands.get('consult');
+  const consultProbe = consultCommand ? results[names.indexOf(consultCommand)] : undefined;
+  console.log(`Consult: ${consult || 'none'}${consult ? (consultProbe && consultProbe.exitCode === 0 && !consultProbe.timedOut ? ' (available)' : ' (unavailable)') : ''}`);
   if (!builder.cmd) console.log(`Unattended runs: no (${builder.note})`);
   else {
     const { command } = invocation(builder);
