@@ -12,7 +12,7 @@ import { auditDiff } from './audit.mjs';
 import { stopFile, stoppedNote } from './stop.mjs';
 import { notifyRun } from './notify.mjs';
 import { readDiff } from './diff.mjs';
-import { reviewChange } from './review.mjs';
+import { adjudicateReview, redactSecrets, reviewChange } from './review.mjs';
 import { planPath, planningFile } from './paths.mjs';
 import { planLanes, runLanes, forwardLaneStop, laneSummary } from './lanes.mjs';
 
@@ -246,8 +246,30 @@ async function checkChange(run, plan, task) {
   if (!reviewedTiers.includes(risk) || !run.repo) return { warnings, review: `not reviewed (${risk})` };
   const scope = `This is one task of a larger plan. Judge only this task; other tasks run separately.\n${task.id} ${task.title}\n${task.details.join('\n')}\nAccept:\n${task.accept.join('\n')}`;
   const review = await reviewChange({ root: run.root, cwd: run.cwd, config: run.config, base: run.good, risk, plan: run.plan, scope, minutes: run.minutes }).catch(() => ({ exitCode: 2 }));
-  if (review.exitCode === 1) return { warnings, failed: true, evidence: review.findings };
-  return { warnings, review: review.exitCode === 0 ? `reviewed${review.partial ? ' (large diff, partly)' : ''}` : 'review unavailable' };
+  const rows = review.rows ?? [];
+  const passed = row => row.verdict === 'PASS' && row.status === 'completed';
+  let rejectedReview;
+  if (review.exitCode === 1) {
+    const lead = rows.filter(row => row.member === run.config.roles.reviewer);
+    if (lead.some(row => row.verdict === 'FAIL') || !lead.some(passed)) return { warnings, failed: true, evidence: review.findings };
+    const path = join(run.dir, `${task.id}-adjudication.md`);
+    const adjudication = await adjudicateReview({ root: run.root, cwd: run.cwd, config: run.config, scope, diff, review, minutes: run.minutes, promptPath: join(run.dir, `${task.id}-adjudication-prompt.md`) })
+      .catch(error => ({ verdict: 'BLOCK', text: '', note: redactSecrets(`Adjudication failed; counted as BLOCK: ${error.message}`) }));
+    atomicWrite(path, [adjudication.text, adjudication.note].filter(Boolean).join('\n\n'));
+    if (adjudication.verdict !== 'REJECT') return { warnings, failed: true, evidence: redactSecrets(`Original FAIL findings:\n${review.findings}\n\nLead adjudication:\n${adjudication.text}\n${adjudication.note}`) };
+    rejectedReview = {
+      adjudication: relative(run.cwd, path).replaceAll('\\', '/'),
+      findings: rows.filter(row => row.verdict === 'FAIL').map(row => ({ member: row.member, path: relative(run.cwd, join(review.dir, row.output)).replaceAll('\\', '/') })),
+    };
+  }
+  const absent = rows.filter(row => !passed(row)).map(row => `${row.member}: ${row.status}${row.status === 'completed' ? ` (${row.verdict})` : ''}`);
+  const reviewed = `reviewed ${rows.filter(passed).length}/${rows.length}${absent.length ? ` (${absent.join('; ')})` : ''}`;
+  return {
+    warnings,
+    review: review.exitCode === 0 || rejectedReview ? `${reviewed}${review.partial ? ' (large diff, partly)' : ''}${rejectedReview ? '; second-family FAIL rejected by lead' : ''}` : `review unavailable${rows.length ? `; ${reviewed}` : ''}`,
+    reviewPatch: review.partial && [0, 1].includes(review.exitCode) ? relative(run.cwd, join(review.dir, 'diff.patch')).replaceAll('\\', '/') : undefined,
+    rejectedReview,
+  };
 }
 
 function checkStop(run) {
@@ -266,7 +288,7 @@ async function waitForProvider(run) {
   const minutes = schedule[run.limitWaits++];
   run.current = `provider limit: waiting ${minutes} min`;
   save(run);
-  if (run.limitWaits === 1) await notifyRun(run.cwd, 'paused', `Provider limit. Waiting ${minutes} min, then retrying.`);
+  if (run.limitWaits === 1) await notifyRun(run.cwd, 'run-paused', `Provider limit. Waiting ${minutes} min, then retrying.`, { runId: run.id });
   if (run.stopRequested) return false;
   await new Promise(done => {
     const timer = setTimeout(done, minutes * 60000);
@@ -283,6 +305,7 @@ async function carryTask(run, task) {
   const plan = readPlan(run.cwd, run.plan, run.config);
   if (!task.accept.length) { settle(run, task, 'unverified', { note: 'no Accept commands; left unticked' }); return; }
   let evidence = run.tasks[task.id]?.note ?? '', last;
+  const laneIntegration = run.tasks[task.id]?.laneIntegration;
   let executor = task.executor ?? run.builderRole;
   const fallback = run.config.roles.fallback;
   const fallbackBuilder = fallback ? resolveBuilder(run.config, fallback) : null;
@@ -290,7 +313,7 @@ async function carryTask(run, task) {
   for (let number = 1; number <= 2; number++) {
     if (number === 2 && fallbackBuilder?.cmd) executor = fallback;
     const builder = resolveBuilder(run.config, executor);
-    run.tasks[task.id] = { executor, attempts: number };
+    run.tasks[task.id] = { executor, attempts: number, ...(laneIntegration ? { laneIntegration } : {}) };
     run.current = `${task.id} ${task.title} (attempt ${number})`;
     run.currentSince = new Date().toISOString();
     save(run);
@@ -351,7 +374,7 @@ async function carryTask(run, task) {
         const commit = run.repo ? await commitAll(run.cwd, `ff: ${task.id} ${task.title}`) : { ok: true };
         if (commit.ok) {
           run.good = commit.head ?? run.good;
-          settle(run, task, 'done', { commit: commit.head?.slice(0, 8), review: check.review, warnings: check.warnings, report: reportLine(last.report), attempts: number });
+          settle(run, task, 'done', { commit: commit.head?.slice(0, 8), review: check.review, reviewPatch: check.reviewPatch, rejectedReview: check.rejectedReview, warnings: check.warnings, report: reportLine(last.report), attempts: number });
           return;
         }
         setBox(run.cwd, run.plan, task.id, false);
@@ -464,8 +487,16 @@ async function finish(run) {
   const finished = states.length > 0 && allDone && !run.stop && exit !== 'failed' && !plan.notes.length;
   const complete = finished && !run.criteriaChanged;
   const status = complete ? 'complete' : finished ? 'needs review' : run.stop ? 'stopped' : 'incomplete';
-  const unreviewed = states.filter(({ state }) => state.status === 'done' && state.review === 'review unavailable').map(({ task }) => task.id);
+  const observer = complete && exit === 'needs an observer';
+  const unreviewed = states.filter(({ state }) => state.status === 'done' && state.review?.startsWith('review unavailable')).map(({ task }) => task.id);
   const reviewNotice = unreviewed.length ? `Finished without review: ${unreviewed.join(', ')}. Review them with ff review before merging.` : '';
+  const partialReviewNotice = states.filter(({ state }) => state.status === 'done' && state.reviewPatch)
+    .map(({ task, state }) => `Partly reviewed (large diff): ${task.id}. Review the rest before merging; full diff in ${state.reviewPatch}.`).join('\n');
+  const rejected = states.filter(({ state }) => state.status === 'done' && state.rejectedReview).map(({ task }) => task.id);
+  const rejectedReviewNotice = rejected.length ? `Lead rejected a second-family FAIL: ${rejected.join(', ')}. See the summary before merging.` : '';
+  const integrationNotice = Object.entries(run.tasks)
+    .filter(([id, state]) => state.laneIntegration && !plan.tasks.some(task => task.id === id && task.done))
+    .map(([id, { laneIntegration }]) => `- ${id}: its lane code is on this branch but failed acceptance after merging (merge ${laneIntegration.mergeCommit.slice(0, 8)}). To drop it, reset to ${laneIntegration.preMerge.slice(0, 8)}; this also drops the rest of that lane merge and every later commit.`).join('\n');
   const row = ({ task, state }) => {
     const facts = [state.commit, state.attempts > 1 ? `${state.attempts} attempts` : '', state.review, ...(state.warnings ?? []), state.note, state.parked ? `work kept on ${state.parked}` : '', state.executor ? `executor: ${state.executor}` : ''].filter(Boolean);
     return `- ${task.id} ${task.title}: ${state.status}${facts.length ? ` — ${facts.join('; ')}` : ''}${state.report ? `\n  ${state.report}` : ''}`;
@@ -473,12 +504,16 @@ async function finish(run) {
   const decisions = decisionLines(run.cwd);
   const summary = [
     `# ${plan.goal || run.plan}`,
-    `Status: ${status}. Exit condition: ${exit}.${run.branch ? ` Branch: ${run.branch}.` : ''}`,
+    observer ? `Status: complete; the exit condition needs a person to check.\nExit condition: ${plan.exit}${run.branch ? `\nBranch: ${run.branch}.` : ''}`
+      : `Status: ${status}. Exit condition: ${exit}.${run.branch ? ` Branch: ${run.branch}.` : ''}`,
     reviewNotice,
+    partialReviewNotice,
     finished && !complete ? 'Every task passed, but acceptance or the task list changed during the run. Read the plan changes before trusting this.' : '',
     run.stop ?? '',
     states.map(row).join('\n'),
+    integrationNotice,
     run.lanes?.length ? `## Lanes\n${run.lanes.map(laneSummary).join('\n')}` : '',
+    states.some(({ state }) => state.rejectedReview) ? `## Rejected review findings\n\n${states.filter(({ state }) => state.rejectedReview).flatMap(({ task, state }) => state.rejectedReview.findings.map(finding => `- ${task.id}: ${finding.member}; lead adjudication: ${state.rejectedReview.adjudication}; original findings: ${finding.path}`)).join('\n')}` : '',
     run.planNotes.length ? `## Plan changes\n${run.planNotes.map(note => `- ${note}`).join('\n')}` : '',
     plan.notes.length ? `## Plan notes\n${plan.notes.map(note => `- ${note}`).join('\n')}` : '',
     decisions.length ? `## To confirm\n${decisions.join('\n')}` : '',
@@ -491,7 +526,7 @@ async function finish(run) {
   run.current = '';
   save(run);
   const counts = `${states.filter(({ state }) => state.status === 'done').length} of ${states.length} tasks done.`;
-  await notifyRun(run.cwd, complete ? 'done' : run.stopRequested ? 'paused' : 'failed', [`${plan.goal || run.plan}: ${status}. ${counts}`, reviewNotice, run.stop].filter(Boolean).join('\n'));
+  await notifyRun(run.cwd, complete ? 'run-done' : run.stopRequested ? 'run-paused' : 'run-failed', [`${plan.goal || run.plan}: ${status}. ${counts}`, observer ? 'All tasks passed; the exit condition needs your confirmation.' : '', reviewNotice, partialReviewNotice, rejectedReviewNotice, run.stop].filter(Boolean).join('\n'), { runId: run.id });
   return complete ? 0 : 1;
 }
 
@@ -576,7 +611,7 @@ export async function runAll(args, root, cwd = process.cwd()) {
       if (branch.stdout.trim() !== run.branch) throw new Error('Cannot adopt lanes: run branch changed; work left intact.');
       recoverPlan(run, adopted);
     } else if (!await openWorktree(run, last?.kind === 'plan' && last.status === 'running' && last.plan === run.plan ? last : null)) {
-      await notifyRun(cwd, 'failed', `${options.plan}: the run could not start.`);
+      await notifyRun(cwd, 'run-failed', `${options.plan}: the run could not start.`, { runId: run.id });
       return 1;
     }
     save(run);

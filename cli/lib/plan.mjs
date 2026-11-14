@@ -8,18 +8,27 @@ export const unquote = text => text.trim().replace(/^`(.*)`$/, '$1');
 const ids = text => [...text.matchAll(/\bT\d\w*(?:[.-]\w+)*\b/gi)].map(match => match[0].toUpperCase());
 const holdSections = ['needs a person', 'direction choices'];
 
+function readRisk(value, notes, where) {
+  if (!value.trim()) return undefined;
+  const raw = value.match(/^[\s`*"'“”‘’]*([a-z]+)/i)?.[1] ?? value.trim().split(/\s+/, 1)[0];
+  const risk = raw.toLowerCase();
+  if (['micro', 'routine', 'contract', 'high'].includes(risk)) return risk;
+  notes.push(`Unknown Risk "${raw}" on ${where}; treated as high. Use micro, routine, contract, or high.`);
+  return 'high';
+}
+
 function acceptLine(task, text) {
   const command = unquote(text.replace(/^\s*[-*]\s+/, '')).trim();
   if (command && !command.startsWith('#')) task.accept.push(command);
 }
 
-function readField(task, name, value) {
+function readField(task, name, value, notes) {
   if (name === 'accept') { acceptLine(task, value); return; }
   task.details.push(`${name}: ${value}`);
   if (name === 'files') task.files.push(...value.replace(/`/g, '').split(/[,\s]+/).filter(Boolean));
   if (name === 'shared') task.shared.push(...value.replace(/`/g, '').split(',').map(item => item.trim()).filter(Boolean));
   if (name === 'executor') task.executor = unquote(value);
-  if (name === 'risk') task.risk = value.match(/\w+/)?.[0].toLowerCase();
+  if (name === 'risk') task.risk = readRisk(value, notes, task.id);
   if (name === 'depends' && !/^(?:none|no|-)?\s*$/i.test(value.replace(/`/g, ''))) {
     task.depends.push(...value.replace(/`/g, '').split(/[,;\s]+/).filter(Boolean).map(id => id.replace(/[.:]$/, '').toUpperCase()));
   }
@@ -61,7 +70,7 @@ export function parsePlan(text, config) {
     if (!current) continue;
     current.body.push(line);
     const named = line.match(/^\s*(Accept|Depends|Files|Shared|Risk|Executor):\s*(.*)$/i);
-    if (named) { field = named[1].toLowerCase(); readField(current, field, named[2]); continue; }
+    if (named) { field = named[1].toLowerCase(); readField(current, field, named[2], notes); continue; }
     if (field === 'accept' && line.trim()) { acceptLine(current, line); continue; }
     current.details.push(line);
     if (!line.trim()) field = '';
@@ -82,7 +91,8 @@ export function parsePlan(text, config) {
   const exit = lines.find(line => /^\s*Exit condition:/i.test(line))?.replace(/^\s*Exit condition:\s*/i, '').trim() ?? '';
   const tasksHeading = lines.findIndex(line => /^#{1,6}\s+Tasks\s*$/i.test(line));
   const header = tasksHeading < 0 ? lines : lines.slice(0, tasksHeading);
-  const risk = header.find(line => /^\s*Risk:/i.test(line))?.match(/^\s*Risk:\s*(\w+)/i)?.[1].toLowerCase();
+  const riskValue = header.find(line => /^\s*Risk:/i.test(line))?.replace(/^\s*Risk:\s*/i, '');
+  const risk = riskValue === undefined ? undefined : readRisk(riskValue, notes, 'plan');
   const goal = lines.find(line => /^#\s/.test(line))?.replace(/^#\s+/, '') ?? '';
   const outcome = lines.find(line => /^\s*Outcome:/i.test(line))?.replace(/^\s*Outcome:\s*/i, '').trim() ?? '';
   return { text, lines, tasks: usable, notes, holds, goal, outcome, risk, exit, exitCommand: exit.match(/^`([^`]+)`/)?.[1] ?? '' };

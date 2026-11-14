@@ -3,6 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { runProcess } from './proc.mjs';
 import { readConfig, resolveBuilder } from './config.mjs';
+import { resolveReviewer } from './review.mjs';
 import { invocation } from './run.mjs';
 import { updateStatus } from './update.mjs';
 import { notifyChannels, notifySettings } from './notify.mjs';
@@ -60,9 +61,14 @@ export async function doctor(cwd = process.cwd()) {
   const { config, found } = readConfig(cwd);
   const roleCommands = new Map();
   for (const [role, selected] of Object.entries(config.roles)) {
-    const executor = resolveBuilder(config, selected);
-    if (!selected || !executor.cmd) continue;
-    const { command } = invocation(executor);
+    if (!selected) continue;
+    const reviewing = role === 'reviewer' || role === 'second';
+    const executor = reviewing ? resolveReviewer(config, selected, { quiet: true }) : resolveBuilder(config, selected);
+    const command = reviewing ? executor.command : executor.cmd ? invocation(executor).command : undefined;
+    if (!command) {
+      if (reviewing && selected !== 'host') console.log(`${role}: ${executor.note}`);
+      continue;
+    }
     roleCommands.set(role, command);
     if (!names.includes(command)) names.push(command);
   }
@@ -95,6 +101,7 @@ export async function doctor(cwd = process.cwd()) {
     } else console.log(`opencode model list ${models.timedOut ? 'timed out' : 'unavailable'}`);
   }
   console.log(`Config: ${found.length ? found.join(', ') : 'not found (defaults)'}`);
+  if (config.projectExecutors.length) console.log(`Project executors: ${config.projectExecutors.join(', ')} (builders use these definitions; review and council ignore them)`);
   const impacts = { builder: 'ff run cannot build', reviewer: 'ff review cannot run the configured reviewer', second: 'ff review cannot run the second reviewer', fallback: 'ff run cannot use the fallback' };
   for (const [role, command] of roleCommands) {
     const result = results[names.indexOf(command)];

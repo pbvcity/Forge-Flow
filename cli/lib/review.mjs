@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
+import { builtInExecutors, promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { runProcess, commandTemplate } from './proc.mjs';
 import { atomicWrite } from './fsx.mjs';
 import { excludeGitEntries } from './git.mjs';
@@ -53,10 +53,12 @@ function boundedContext(text, limit = 24 * 1024) {
   return `${Buffer.from(text).subarray(0, limit - 100).toString('utf8')}\n[OMITTED: context beyond ${limit} bytes]`;
 }
 
-export function resolveReviewer(config, member) {
+export function resolveReviewer(config, member, { quiet = false } = {}) {
   if (!member || member === 'host') return { note: 'Use a clean read-only host sub-agent for this reviewer.' };
-  const resolved = resolveBuilder({ ...config, roles: { ...config.roles, builder: member } });
-  if (!resolved.cmd) return { note: `No executor configured for reviewer ${member}` };
+  const resolved = resolveBuilder({ ...config, executors: config.userExecutors ?? builtInExecutors }, member);
+  if (!resolved.cmd) return { note: config.projectExecutors?.includes(member)
+    ? `executor ${member} is defined in the project's .ff/config.json; reviewers only run executors from ~/.ff/config.json. Move it there to use it.`
+    : `No executor configured for reviewer ${member}` };
   const template = Array.isArray(resolved.cmd) ? { command: resolved.cmd[0], args: resolved.cmd.slice(1) } : commandTemplate(resolved.cmd);
   let extra;
   if (member.startsWith('opencode:')) extra = ['--agent', 'ff-review'];
@@ -74,11 +76,11 @@ export function resolveReviewer(config, member) {
   }
   else if (/^claude(?:\.(?:cmd|exe|bat))?$/i.test(basename(template.command))) {
     template.args = removeArgs(template.args, ['--permission-mode'], ['--dangerously-skip-permissions']);
-    extra = ['--tools', 'Read,Grep,Glob', '--permission-mode', 'plan'];
+    extra = ['--tools', 'Read,Grep,Glob', '--permission-mode', 'plan', '--setting-sources', 'user', '--strict-mcp-config'];
   }
   else {
     extra = [];
-    console.error(`Warning: custom reviewer ${member}: cmd must enforce read-only mode, or supply reviewArgs; ff cannot sandbox arbitrary executables.`);
+    if (!quiet) console.error(`Warning: custom reviewer ${member}: cmd must enforce read-only mode, or supply reviewArgs; ff cannot sandbox arbitrary executables.`);
   }
   const argv = [...template.args, ...extra];
   let model;
@@ -105,7 +107,7 @@ function removeArgs(args, pairs, flags) {
   return args.filter((arg, index) => !flags.includes(arg) && !pairs.includes(arg) && !pairs.includes(args[index - 1]) && !pairs.some(flag => arg.startsWith(`${flag}=`)));
 }
 
-function reviewPrompt({ root, cwd, base, plan: selectedPlan, config, scope, round, diff }) {
+function reviewPrompt({ root, cwd, base, plan: selectedPlan, config, scope, round, diff, patchPath, inventory, findings }) {
   const discipline = readFileSync(join(root, 'playbook/review.md'), 'utf8');
   const path = planPath(cwd, config, selectedPlan);
   const plan = optionalFile(path);
@@ -127,8 +129,10 @@ function reviewPrompt({ root, cwd, base, plan: selectedPlan, config, scope, roun
     `Range: ${base} to current worktree (including non-ignored untracked files); round ${round}.${round > 1 ? ' Fix diff only: --base must identify the pre-fix revision.' : ''}`,
     `Acceptance criteria (${path}):\n${boundedContext(acceptance || '(no plan)')}`,
     `Known accepted (REVIEW.md):\n${boundedContext(accepted || '(none)')}`,
+    ...(findings !== undefined ? [`Lead-adjudicated findings:\nVerify each listed finding is fixed, and also check whether the fix diff introduces new problems.\n${boundedContext(redactSecrets(findings))}`] : []),
     `Review discipline:\n${rules}`,
-    `Diff:\n${boundedDiff(diff)}`,
+    ...(patchPath ? [`Partial review input. Full redacted diff: ${patchPath}\nUse Read with successive offsets to read all omitted portions through EOF before concluding. The patch also contains the complete file inventory; the inline inventory may be truncated.`] : []),
+    `Diff:\n${boundedDiff(patchPath ? `${inventory}\n\n${diff}` : diff)}`,
     instructions,
   ];
   return redactSecrets(sections.join('\n\n'));
@@ -160,18 +164,50 @@ async function runReviewer(config, member, prompt, cwd, minutes, promptPath) {
   if (auth) status = 'auth failed';
   const warnings = [...parsed.warnings, ...(result.outputTruncated ? ['Output truncated: last 4 MiB per stream retained'] : [])];
   const verdict = environmentFailure || auth ? 'unknown' : parsed.verdict === 'PASS' && (status !== 'completed' || result.outputTruncated) ? 'unknown' : parsed.verdict;
-  return { row: { ...base, verdict, warnings, model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, ...(result.idleTimedOut ? { idleTimedOut: true, note: result.reason } : {}), ...(environmentFailure ? { note: environmentFailure } : {}), ...(auth ? { note: `${auth}; log in to ${executor.command} and rerun` } : {}), pid: result.pid, error: result.error }, stdout: result.stdout, stderr: result.stderr };
+  return { row: { ...base, verdict, warnings, model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, ...(result.idleTimedOut ? { idleTimedOut: true, note: result.reason } : {}), ...(environmentFailure ? { note: environmentFailure } : {}), ...(auth ? { note: `${auth}; log in to ${executor.command} and rerun` } : {}), pid: result.pid, error: result.error }, stdout: result.stdout, stderr: result.stderr, outputTruncated: result.outputTruncated };
 }
 
-export async function reviewChange({ root, cwd, config, base, risk, round = 1, panel = false, plan, scope, minutes = 60 }) {
+export async function adjudicateReview({ root, cwd, config, scope, diff, review, minutes, promptPath }) {
+  const discipline = readFileSync(join(root, 'playbook/review.md'), 'utf8');
+  const deciding = discipline.split('## Deciding')[1].split('\n## ')[0].trim();
+  const findings = review.rows.filter(row => row.verdict === 'FAIL').map(row => {
+    const path = resolve(review.dir, row.output);
+    return `Member: ${row.member}\nOriginal findings: ${path}\n${boundedContext(redactSecrets(readFileSync(path, 'utf8')))}`;
+  }).join('\n\n');
+  const prompt = redactSecrets([
+    'Read-only adjudication. Do not modify files or run write commands.',
+    `Task scope and acceptance commands:\n${boundedContext(scope)}`,
+    `## Deciding\n${deciding}`,
+    `Original FAIL findings:\n${findings}\nIf findings are omitted inline, use Read with successive offsets to read their original files through EOF.`,
+    ...(review.partial ? [`Partial review input. Full redacted diff: ${resolve(review.dir, 'diff.patch')}\nUse Read with successive offsets to read all omitted portions through EOF before deciding.`] : []),
+    `Diff:\n${boundedDiff(diff)}`,
+    'For each blocking finding, write block or reject and give a reason. If any finding is block, the conclusion must be BLOCK. Last line: ADJUDICATION: BLOCK or ADJUDICATION: REJECT.',
+  ].join('\n\n'));
+  const result = await runReviewer(config, config.roles.reviewer, prompt, cwd, minutes, promptPath);
+  const last = [...result.stdout.matchAll(/^[ \t]*(?:\*\*)?ADJUDICATION(?:\*\*)?[ \t]*:[ \t]*(?:\*\*)?[ \t]*([^\r\n]*)/gim)].at(-1)?.[1] ?? '';
+  const conclusion = /^(BLOCK|REJECT)(?:\s|\*\*|[.,;:!?，。；：！？])*$/i.exec(last)?.[1].toUpperCase();
+  const usable = result.row.status === 'completed' && !result.outputTruncated && conclusion;
+  return {
+    verdict: usable ? conclusion : 'BLOCK',
+    text: redactSecrets(result.stdout),
+    note: usable ? '' : redactSecrets(`Adjudication unavailable (${result.row.status}${result.row.note ? `: ${result.row.note}` : ''}) or missing a final conclusion; counted as BLOCK.\n${result.row.error ?? ''}\n${result.stderr}`),
+  };
+}
+
+export async function reviewChange({ root, cwd, config, base, risk, round = 1, panel = false, plan, scope, findings: findingsPath, minutes = 60 }) {
+  const priorFindings = findingsPath === undefined ? undefined : readFileSync(resolve(cwd, findingsPath), 'utf8');
   const members = reviewers(config, risk, round, panel);
   if (!members.length) return { exitCode: 0, rows: [], skipped: 'micro: no reviewers; check your own diff.' };
   if (members.every(member => member === 'host')) return { exitCode: 3, rows: [], skipped: 'Use a clean read-only host sub-agent for this review.' };
   await excludeGitEntries(cwd, ['**/.ff/reviews/']);
-  const diff = await readDiff(cwd, base);
-  const prompt = reviewPrompt({ root, cwd, config, base, plan, scope, round, diff });
+  const { diff, fullDiff, omittedFiles, files } = await readDiff(cwd, base, { includeFullDiff: true });
+  const partial = omittedFiles.length > 0 || Buffer.byteLength(diff) > diffLimit;
   const id = `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
   const dir = join(cwd, '.ff/reviews', id);
+  const patchPath = partial ? resolve(dir, 'diff.patch') : undefined;
+  const inventory = `File inventory:\n${files.map(file => JSON.stringify(file)).join('\n')}`;
+  if (partial) atomicWrite(patchPath, redactSecrets(`${inventory}\n\n${fullDiff}`));
+  const prompt = reviewPrompt({ root, cwd, config, base, plan, scope, round, diff, patchPath, inventory, findings: priorFindings });
   const results = await Promise.all(members.map((member, index) => runReviewer(config, member, prompt, cwd, minutes, join(dir, `${index + 1}-prompt.md`)).catch(error => ({ row: { member, model: String(member), status: 'failed', durationMs: 0, verdict: 'unknown', warnings: [], note: error.message }, stdout: `${error.message}\n`, stderr: '' }))));
   // Publish only after every process exits: running peers cannot read this panel's results.
   results.forEach((result, index) => {
@@ -182,9 +218,8 @@ export async function reviewChange({ root, cwd, config, base, risk, round = 1, p
   });
   const rows = results.map(result => result.row);
   const exitCode = rows.some(row => row.verdict === 'FAIL') ? 1 : rows.some(row => row.verdict === 'PASS' && row.status === 'completed') ? 0 : 2;
-  const partial = Buffer.byteLength(diff) > diffLimit;
   atomicWrite(join(dir, 'summary.json'), redactSecrets(`${JSON.stringify({ id, base, risk, round, exitCode, partial, members: rows }, null, 2)}\n`));
-  const findings = results.filter(result => result.row.verdict === 'FAIL').map(result => result.stdout).join('\n\n').slice(-12000);
+  const findings = redactSecrets(results.filter(result => result.row.verdict === 'FAIL').map(result => result.stdout).join('\n\n')).slice(-12000);
   return { exitCode, rows, dir, partial, findings };
 }
 
@@ -198,7 +233,7 @@ export async function review(args, root, cwd = process.cwd()) {
   if (result.skipped) { (result.exitCode ? console.error : console.log)(result.skipped); return result.exitCode; }
   console.log('Reviewer | Model | Status | Verdict | Duration');
   for (const row of result.rows) console.log(redactSecrets(`${row.member} | ${row.model} | ${row.status} | ${row.verdict} | ${row.durationMs}ms${row.note ? ` | ${row.note}` : ''}${row.warnings.length ? ` | ${row.warnings.join('; ')}` : ''}`));
-  if (result.partial) console.log(`Large diff: reviewers saw only the first part. Split the change or review the rest by hand.`);
+  if (result.partial) console.log(redactSecrets(`Large diff: inline review input is partial. Full redacted diff: ${resolve(result.dir, 'diff.patch')}. Reviewers were instructed to read the rest with Read.`));
   console.log(join(result.dir, 'summary.json'));
   return result.exitCode;
 }

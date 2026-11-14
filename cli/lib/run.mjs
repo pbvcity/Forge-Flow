@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, relative, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -70,21 +70,26 @@ export function status(cwd = process.cwd(), args = []) {
   const interrupted = run?.status === 'running' && isAlive(run.pid) === false;
   const live = run?.status === 'running' && !interrupted;
   const { config } = readConfig(cwd, undefined, () => {});
+  const selectedPlan = planPath(cwd, config, explicit ?? run?.plan);
+  // Symlinked temp roots (macOS /var -> /private/var) make equal paths differ as text.
+  const real = path => { try { return realpathSync.native(path); } catch { return resolve(path); } };
+  const taskRun = explicit && run?.plan && relative(real(selectedPlan), real(resolve(cwd, run.plan))) ? null : run;
   let plan;
-  try { plan = readPlan(cwd, planPath(cwd, config, explicit ?? run?.plan), config); } catch {}
+  try { plan = readPlan(cwd, selectedPlan, config); } catch {}
   if (!run) console.log('No runs recorded.');
   else {
     const resume = run.lanes?.length ? `ff run --all --lanes ${run.lanes.length} resumes it` : 'ff run --all resumes it';
     console.log(`Latest run: ${interrupted ? `interrupted; ${resume}` : run.status}, started ${elapsed(run.startedAt)} ago${run.branch ? `, branch ${run.branch}` : ''}`);
-    if (live && run.current) console.log(`Now: ${run.current}, for ${elapsed(run.currentSince ?? run.startedAt)}`);
+    if (!taskRun) console.log(`Latest run belongs to another plan: ${run.plan}. Its task states are not used for the selected plan.`);
+    if (live && taskRun?.current) console.log(`Now: ${run.current}, for ${elapsed(run.currentSince ?? run.startedAt)}`);
     if (run.note) console.log(run.note);
-    for (const lane of run.lanes ?? []) {
+    for (const lane of taskRun?.lanes ?? []) {
       const child = lane.path ? laneRecord(lane) : null;
       console.log(`Lane ${lane.letter}: ${lane.tasks.join(', ')} — ${child?.status || lane.status}${child?.current ? ` (${child.current})` : ''}; ${lane.path ?? 'pending'}${lane.merged ? '; merged' : ''}`);
     }
   }
   const inLane = {};
-  for (const lane of run?.lanes ?? []) if (lane.path && !lane.merged) {
+  for (const lane of taskRun?.lanes ?? []) if (lane.path && !lane.merged) {
     const child = laneRecord(lane);
     for (const id of lane.tasks) {
       const saved = child?.tasks?.[id];
@@ -94,10 +99,10 @@ export function status(cwd = process.cwd(), args = []) {
     }
   }
   const states = (plan?.tasks ?? []).map(task => {
-    const saved = run?.tasks?.[task.id], hold = holdOn(plan, task);
+    const saved = taskRun?.tasks?.[task.id], hold = holdOn(plan, task);
     if (task.done) return { task, state: 'done' };
     if (inLane[task.id]) return { task, ...inLane[task.id] };
-    if (live && run.current?.startsWith(`${task.id} `)) return { task, state: 'running' };
+    if (live && taskRun?.current?.startsWith(`${task.id} `)) return { task, state: 'running' };
     if (hold) return { task, state: 'held', note: hold.reason };
     if (saved) return { task, state: saved.status, note: saved.note };
     return { task, state: task.depends.some(id => !plan.tasks.find(other => other.id === id)?.done) ? 'blocked' : 'not started' };

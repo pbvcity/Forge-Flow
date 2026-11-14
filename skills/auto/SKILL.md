@@ -70,6 +70,6 @@ Run the project's checks before closing the branch: run commits skipped git hook
 
 Going live and open items in `DECISIONS.md` follow the playbook: continue development, record provisional business decisions, and wait for confirmation of each open item the release carries before going live.
 
-When a plan is finished, `ff archive` moves it to `plans/done/`.
+When a plan is finished, `ff archive` moves it to `<planning folder>/done/`.
 
 Leave one summary for the user: what got done, every open item in `DECISIONS.md` for them to confirm one by one, what needs them (with steps), what they may want changed, and the state of the exit condition.

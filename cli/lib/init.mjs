@@ -27,6 +27,7 @@ function rulesBlock({ planning, temp, worktrees }) {
 
 - \`docs/\`: how the shipped system works. \`docs/README.md\` routes to each area's README. Update the doc a change made wrong before committing; \`ff docs\` lists candidates.
 - \`${planning}/\`: plans, open decisions (\`DECISIONS.md\`), and dated follow-ups (\`FOLLOWUPS.md\`). Tracked.
+- State lives in the plan, git, and \`ff status\`. After compaction or resume, reread the plan and run \`ff status\` before acting.
 - \`${temp}/\` (git-ignored): throwaway work, sorted by kind: \`scripts/<task>/\`, \`logs/<task>/\`, \`scratch/<task>/\`, \`snapshots/\`, \`backups/\`. Nothing at its root, nothing outside the repository.
 - Secrets live only in ignored files or the user's environment, never in \`docs/\`, \`${planning}/\`, or \`${temp}/\`.
 - Worktrees: \`${worktrees}/<branch>/\`, branched from the latest main. Remove them after their branch merges: \`ff wt clean\`.

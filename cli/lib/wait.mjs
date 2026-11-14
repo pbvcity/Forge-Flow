@@ -1,7 +1,8 @@
 import { join } from 'node:path';
+import { unlinkSync } from 'node:fs';
 import { setTimeout } from 'node:timers/promises';
 import { latestRun } from './run.mjs';
-import { jsonFile } from './fsx.mjs';
+import { atomicWrite, jsonFile } from './fsx.mjs';
 import { isAlive } from './proc.mjs';
 
 export async function wait(args = [], cwd = process.cwd()) {
@@ -21,16 +22,29 @@ export async function wait(args = [], cwd = process.cwd()) {
     console.log(`Report: ${join(directory, 'summary.md')}`);
     return code;
   };
-  for (;;) {
-    let current = jsonFile(join(directory, 'run.json'));
-    if (!current) return finish('run record unavailable', 1);
-    if (current.status === 'running' && isAlive(current.pid) === false) {
-      current = jsonFile(join(directory, 'run.json')) ?? current;
-      if (current.status === 'running') return finish('interrupted; controller is dead', 1);
+  const watcher = join(directory, 'watchers', `${process.pid}.json`);
+  const cleanup = () => { try { unlinkSync(watcher); } catch {} };
+  const onSigint = () => { cleanup(); process.exit(130); };
+  const onSigterm = () => { cleanup(); process.exit(143); };
+  try {
+    atomicWrite(watcher, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }));
+    process.once('SIGINT', onSigint);
+    process.once('SIGTERM', onSigterm);
+    for (;;) {
+      let current = jsonFile(join(directory, 'run.json'));
+      if (!current) return finish('run record unavailable', 1);
+      if (current.status === 'running' && isAlive(current.pid) === false) {
+        current = jsonFile(join(directory, 'run.json')) ?? current;
+        if (current.status === 'running') return finish('interrupted; controller is dead', 1);
+      }
+      if (current.status !== 'running') return finish(current.status, current.status === 'done' ? 0 : 1);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return finish('running; wait timed out', 3);
+      await setTimeout(Math.min(5000, remaining));
     }
-    if (current.status !== 'running') return finish(current.status, current.status === 'done' ? 0 : 1);
-    const remaining = deadline - Date.now();
-    if (remaining <= 0) return finish('running; wait timed out', 3);
-    await setTimeout(Math.min(5000, remaining));
+  } finally {
+    cleanup();
+    process.removeListener('SIGINT', onSigint);
+    process.removeListener('SIGTERM', onSigterm);
   }
 }

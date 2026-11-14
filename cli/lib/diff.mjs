@@ -1,11 +1,15 @@
 import { git } from './git.mjs';
+import { lstatSync } from 'node:fs';
+import { join } from 'node:path';
+
+const fullDiffLimit = 16 * 1024 * 1024;
 
 export function diffOptions(args, reviewing = false) {
   const options = { round: 1, minutes: 60, panel: false };
   for (let i = 0; i < args.length; i++) {
     const flag = args[i];
     if (reviewing && flag === '--panel') { options.panel = true; continue; }
-    const key = { '--base': 'base', ...(reviewing ? { '--risk': 'risk', '--round': 'round', '--timeout-min': 'minutes', '--plan': 'plan' } : {}) }[flag];
+    const key = { '--base': 'base', ...(reviewing ? { '--risk': 'risk', '--round': 'round', '--timeout-min': 'minutes', '--plan': 'plan', '--findings': 'findings' } : {}) }[flag];
     if (!key || !args[i + 1] || args[i + 1].startsWith('--')) throw new Error(`Invalid option: ${flag}`);
     options[key] = ['round', 'minutes'].includes(key) ? Number(args[++i]) : args[++i];
   }
@@ -16,20 +20,46 @@ export function diffOptions(args, reviewing = false) {
   return options;
 }
 
-export async function readDiff(cwd, base) {
+export async function readDiff(cwd, base, { includeFullDiff = false, maxFullDiffBytes = fullDiffLimit } = {}) {
   const result = await git(cwd, ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-textconv', '--find-renames', '--unified=3', base, '--'], { maxOutputBytes: 32 * 1024 * 1024 });
   if (result.exitCode !== 0 || result.timedOut || result.outputTruncated) throw new Error(`Diff unavailable or incomplete: ${result.stderr || result.error || 'git output limit reached'}`);
   const options = { maxOutputBytes: 32 * 1024 * 1024 };
   const untracked = await git(cwd, ['ls-files', '--others', '--exclude-standard', '-z'], options);
   if (untracked.exitCode !== 0 || untracked.timedOut || untracked.outputTruncated) throw new Error(`Untracked files unavailable or incomplete: ${untracked.stderr || untracked.error || 'git output limit reached'}`);
   const files = untracked.stdout.split('\0').filter(Boolean);
-  let diff = result.stdout;
-  for (const file of files.slice(0, 200)) {
-    const added = await git(cwd, ['-c', 'core.quotePath=false', 'diff', '--no-index', '--no-ext-diff', '--no-textconv', '--unified=3', '--', '/dev/null', file], options);
-    if (![0, 1].includes(added.exitCode) || added.timedOut || added.outputTruncated) throw new Error(`Untracked diff unavailable or incomplete (${file}): ${added.stderr || added.error || 'git output limit reached'}`);
-    diff += added.stdout;
+  const chunks = [result.stdout];
+  let bytes = Buffer.byteLength(result.stdout);
+  if (bytes > maxFullDiffBytes) {
+    chunks[0] = Buffer.from(result.stdout).subarray(0, maxFullDiffBytes).toString('utf8').replace(/[^\n]*$/, '')
+      + '\n[OMITTED: tracked diff beyond the full diff byte limit]\n';
+    bytes = maxFullDiffBytes;
   }
+  const omittedFiles = files.slice(200);
+  const omit = file => {
+    chunks.push(`\n[OMITTED: oversized untracked file ${JSON.stringify(file)}; full diff content limit (${maxFullDiffBytes} bytes)]\n`);
+    if (!omittedFiles.includes(file)) omittedFiles.push(file);
+  };
+  for (const file of includeFullDiff ? files : files.slice(0, 200)) {
+    const remaining = maxFullDiffBytes - bytes;
+    if (remaining <= 0 || lstatSync(join(cwd, file)).size > remaining) { omit(file); continue; }
+    const added = await git(cwd, ['-c', 'core.quotePath=false', 'diff', '--no-index', '--no-ext-diff', '--no-textconv', '--unified=3', '--', '/dev/null', file], { maxOutputBytes: Math.min(options.maxOutputBytes, remaining) });
+    if (![0, 1].includes(added.exitCode) || added.timedOut) throw new Error(`Untracked diff unavailable or incomplete (${file}): ${added.stderr || added.error || 'git output limit reached'}`);
+    if (added.outputTruncated) {
+      omit(file);
+    } else {
+      chunks.push(added.stdout);
+      bytes += Buffer.byteLength(added.stdout);
+    }
+  }
+  let diff = chunks.slice(0, 201).join('');
   if (files.length > 200) diff += `\n[OMITTED: ${files.length - 200} untracked files beyond the 200-file limit]\n`;
+  if (includeFullDiff) {
+    const tracked = await git(cwd, ['diff', '--no-ext-diff', '--no-textconv', '--name-only', '-z', base, '--'], options);
+    if (tracked.exitCode !== 0 || tracked.timedOut || tracked.outputTruncated) throw new Error(`Diff inventory unavailable or incomplete: ${tracked.stderr || tracked.error || 'git output limit reached'}`);
+    const trackedFiles = tracked.stdout.split('\0').filter(Boolean);
+    if (Buffer.byteLength(result.stdout) > maxFullDiffBytes) omittedFiles.push(...trackedFiles);
+    return { diff, fullDiff: chunks.join(''), omittedFiles, files: [...trackedFiles, ...files] };
+  }
   return diff;
 }
 

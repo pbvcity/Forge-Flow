@@ -50,6 +50,7 @@ Ask of each: what loss does this prevent, and what does it cost when it misfires
 ## Second reviewer and panels
 
 - The second family has no vote, and every one of its findings gets a response.
+- In unattended `ff run --all`, a usable PASS from `roles.reviewer` lets a fresh read-only lead process adjudicate other members' FAIL findings before retrying: BLOCK (also failure, timeout, or an unparseable conclusion) spends an attempt; REJECT proceeds and records the decision under `Rejected review findings` in the run summary. A lead FAIL or no usable lead PASS keeps the usual failed attempt; manual `ff review` is unchanged.
 - A panel runs in parallel in the first round only. Members cannot see each other's results.
 - A member who times out or is missing is noted and does not affect the others.
 - Agreement is a strong signal. If results diverge widely, the spec is underspecified: fix it and rerun rather than averaging.
@@ -57,7 +58,7 @@ Ask of each: what loss does this prevent, and what does it cost when it misfires
 
 ## Rounds
 
-Fix rounds review the fix diff only, with one reviewer, preferably the finder.
+Fix rounds review the fix diff only, with one reviewer, preferably the finder. The lead chooses the re-reviewer through reviewer configuration (or a first-round panel with `--panel`); the CLI does not automatically select the finder.
 
 | Tier | Most rounds |
 |---|---|

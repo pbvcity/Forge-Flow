@@ -150,7 +150,9 @@ A missing model downgrades the workflow and never blocks it. On Pi, one tool rea
 
 ## Your rules
 
-Project settings go in `.ff/config.json`, which overrides `~/.ff/config.json`. Your own rules go in `~/.ff/my-rules.md`. See [cli/README.md](cli/README.md) for the tool.
+Project settings go in `.ff/config.json`, which overrides `~/.ff/config.json` for roles and builders. Review and council use only built-in executors and executor definitions from `~/.ff/config.json`; project `executors` cannot change the commands or arguments they run. A member defined only in the project is reported as absent with migration instructions. `ff doctor` lists those project definitions and their scope.
+
+ff does not take review or council commands and arguments from repository configuration. Its automatic Claude reviewer arguments include `--setting-sources user --strict-mcp-config`, excluding repository `.claude/settings*.json` (including hooks) and project MCP servers; user-configured `reviewArgs` still take priority. OpenCode, Pi, Codex, and other reviewer tools may still load repository project configuration, plugins, or extensions themselves, so inspect the repository for these files before reviewing untrusted code. This does not make `ff run` safe in an untrusted repository: project builders and the plan's `Accept:` commands still execute. Your own rules go in `~/.ff/my-rules.md`. See [cli/README.md](cli/README.md) for the tool.
 
 ## Update
 

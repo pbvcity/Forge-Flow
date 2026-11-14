@@ -5,12 +5,14 @@ import { homedir, hostname } from 'node:os';
 import { basename, join } from 'node:path';
 import { followupLine, localDate, readFollowups } from './followups.mjs';
 import { latestRun, runIsLive } from './run.mjs';
+import { jsonFile } from './fsx.mjs';
+import { isAlive } from './proc.mjs';
 
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_DETAIL = 500;
 const LABELS = {
-  en: { done: 'Finished', waiting: 'Waiting for you', permission: 'Needs your approval', failed: 'Failed', paused: 'Paused', followups: 'Follow-ups due', test: 'Test message' },
-  zh: { done: '任务完成', waiting: '等你回应', permission: '等你批准', failed: '出错了', paused: '已暂停', followups: '有跟进到期', test: '测试消息' },
+  en: { done: 'Finished', waiting: 'Waiting for you', permission: 'Needs your approval', failed: 'Failed', paused: 'Paused', 'run-done': 'Run finished', 'run-failed': 'Run did not finish', 'run-paused': 'Run paused', followups: 'Follow-ups due', test: 'Test message' },
+  zh: { done: '任务完成', waiting: '等你回应', permission: '等你批准', failed: '出错了', paused: '已暂停', 'run-done': '后台运行完成', 'run-failed': '后台运行未完成', 'run-paused': '后台运行已暂停', followups: '有跟进到期', test: '测试消息' },
 };
 
 export function parseEnvFile(text) {
@@ -148,7 +150,7 @@ async function notifyDeadRun(cwd, { settings, home, fetcher }) {
     throw error;
   }
   const detail = settings.lang === 'zh' ? `ff run ${run.id} 未跑完就中断了` : `ff run ${run.id} stopped without finishing`;
-  const result = await sendNotice({ event: 'failed', project: basename(cwd), detail }, { settings, home, fetcher });
+  const result = await sendNotice({ event: 'run-failed', project: basename(cwd), detail }, { settings, home, fetcher });
   if (!result.sent) rmSync(marker, { force: true });
   return result;
 }
@@ -213,14 +215,30 @@ export async function handleHook(payload, { env = process.env, home = homedir(),
     notice = { event: 'waiting', detail: payload.message };
   } else return { skipped: 'other event' };
   writeFileSync(file, JSON.stringify({ ...state, notified: now }));
-  return sendNotice({ ...notice, project: basename(payload.cwd ?? process.cwd()) }, { settings, home, fetcher });
+  const result = await sendNotice({ ...notice, project: basename(payload.cwd ?? process.cwd()) }, { settings, home, fetcher });
+  if (!result.sent) {
+    const current = readSession(file);
+    if (current.started === state.started && current.notified === now) writeFileSync(file, JSON.stringify(state));
+  }
+  return result;
 }
 
-export async function notifyRun(cwd, event, detail) {
-  if (process.env.FF_CHILD) return;
-  const settings = notifySettings();
+export async function notifyRun(cwd, event, detail, { runId, env = process.env, home = homedir(), fetcher = fetch } = {}) {
+  if (env.FF_CHILD) return;
+  const settings = notifySettings(env, home);
   if (!notifyChannels(settings).length) return;
-  await sendNotice({ event, project: basename(cwd), detail }, { settings }).catch(() => {});
+  if (event === 'run-done') {
+    const id = runId ?? latestRun(cwd)?.id;
+    if (id) {
+      const directory = join(cwd, '.ff/runs', id, 'watchers');
+      let names = [];
+      try { names = readdirSync(directory); } catch {}
+      if (names.some(name => name.endsWith('.json') && isAlive(jsonFile(join(directory, name))?.pid) === true)) {
+        return { skipped: 'a session is waiting on this run' };
+      }
+    }
+  }
+  await sendNotice({ event, project: basename(cwd), detail }, { settings, home, fetcher }).catch(() => {});
 }
 
 export async function notify(args, cwd = process.cwd()) {

@@ -62,10 +62,10 @@ Verdict: PASS or FAIL. FAIL while any BLOCKER or HIGH is open.
 
 Unless the user asked for review only, fix what the lead accepted, and delete what "Can be deleted" lists when the lead agrees. Use a fix card that says: smallest fix, no other protection. Check the same pattern elsewhere for confirmed bugs. Do not sweep for hypothetical bypasses.
 
-Round 2 onward: one reviewer reads the fix diff only.
+Round 2 onward: one reviewer reads the fix diff only. The lead supplies its adjudicated findings explicitly with `--findings <path>` so the reviewer checks each fix and any new problems introduced by the fix diff.
 
 ```
-node <this skill's directory>/../../cli/ff.mjs review --base <ref> --risk <tier> --round <n>
+node <this skill's directory>/../../cli/ff.mjs review --base <ref> --risk <tier> --round <n> --findings <path>
 ```
 
 Stop on the conditions in `review.md`. High tier has at most 3 rounds. The second appearance of a family ends patching for that family. At the limit, decide. Report the verdict and where `REVIEW.md` is, then continue with whatever the calling skill had left.

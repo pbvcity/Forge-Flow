@@ -5,7 +5,7 @@ description: Turns a request into PLAN.md with tasks, runnable acceptance comman
 
 # plan
 
-Follow `../../playbook/default.md` (relative to this skill's directory). Output: `PLAN.md` at the repository root. For several plans side by side, keep each in its own file and pass `--plan <path>` to the tool.
+Follow `../../playbook/default.md` (relative to this skill's directory). Output: `planning/PLAN.md` by default; an existing root `PLAN.md` still works. For several plans side by side, keep each in its own file and pass `--plan <path>` to the tool.
 
 ## 1. Understand
 

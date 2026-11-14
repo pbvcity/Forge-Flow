@@ -22,6 +22,28 @@ export function laneSummary(lane) {
   return `- Lane ${lane.letter}: ${lane.tasks.join(', ')}; ${lane.attempts ?? 0} attempts; duration ${lane.durationMs ?? 0} ms; ${lane.merged ? 'merged' : 'not merged'} (${lane.status})${lane.error ? `; ${lane.error}` : ''}${lane.outsideFiles?.length ? `; writes outside Files: ${lane.outsideFiles.join(', ')}` : ''}${lane.path && !lane.cleanup?.removed ? `; kept ${lane.path}${lane.cleanup?.reason ? `: ${lane.cleanup.reason}` : ''}` : ''}`;
 }
 
+function copyLaneEvidence(run, lane, id, state) {
+  const dir = join(run.dir, 'lanes', lane.letter, 'runs', lane.childId, 'evidence', id);
+  // Missing evidence is noted, never a reason to stop merging.
+  const copy = path => {
+    const target = join(dir, basename(path));
+    try {
+      mkdirSync(dir, { recursive: true });
+      copyFileSync(resolve(lane.path, path), target);
+      return relative(run.cwd, target).replaceAll('\\', '/');
+    } catch (error) { return `${resolve(lane.path, path)} (not copied: ${error.code ?? error.message})`; }
+  };
+  return {
+    ...state,
+    ...(state.reviewPatch ? { reviewPatch: copy(state.reviewPatch) } : {}),
+    ...(state.rejectedReview ? { rejectedReview: {
+      ...state.rejectedReview,
+      adjudication: copy(state.rejectedReview.adjudication),
+      findings: state.rejectedReview.findings.map(finding => ({ ...finding, path: copy(finding.path) })),
+    } } : {}),
+  };
+}
+
 // Detached controllers own their locks and stop their own executors. The parent only observes them.
 export async function runLanes(run, { count, cli, save, checkStop }) {
   return withLaneGit(async () => {
@@ -65,9 +87,9 @@ export async function runLanes(run, { count, cli, save, checkStop }) {
         try {
           const result = await mergeLane({ cwd: run.cwd, config: run.config, lane, runBranch: run.branch, tasks: readPlan(run.cwd, run.plan, run.config).tasks, child, planFile: resolve(run.cwd, run.plan), timeoutMs: run.minutes * 60000, shouldStop: () => { checkStop(run); return Boolean(run.stop); } });
           Object.assign(lane, result);
-          for (const id of result.done) run.tasks[id] = { ...child?.tasks?.[id], status: 'done' };
+          for (const id of result.done) run.tasks[id] = { ...copyLaneEvidence(run, lane, id, child.tasks[id]), status: 'done' };
           for (const id of result.tail) if (result.acceptance[id]?.note) {
-            run.tasks[id] = { note: result.acceptance[id].note };
+            run.tasks[id] = { note: result.acceptance[id].note, laneIntegration: { preMerge: result.preMerge, mergeCommit: result.mergeCommit } };
             run.planNotes.push(`${id}: ${result.acceptance[id].note}`);
           }
           if (result.treeUnconfirmed) { run.executorPid = result.pid; run.stop = `Lane integration process may still be alive (pid ${result.pid}).`; }
@@ -251,6 +273,7 @@ export function mergeLane({ cwd, config = {}, lane, runBranch, tasks, child, pla
     const outsideFiles = changed.filter(file => file !== planName && file !== decisionName && !selected.some(task => task.files?.some(glob => matches(file, glob))));
     const result = { merged: false, tip, done: [], tail: [...lane.tasks], outsideFiles, acceptance: {} };
     if (shouldStop()) return result;
+    result.preMerge = (await output(cwd, ['rev-parse', 'HEAD'])).trim();
     const merged = await git(cwd, ['-c', 'commit.gpgsign=false', 'merge', '--no-ff', '--no-verify', '--no-commit', tip], { timeoutMs });
     const conflicts = (await output(cwd, ['diff', '--name-only', '--diff-filter=U', '-z'])).split('\0').filter(Boolean);
     if (merged.exitCode !== 0 && (!conflicts.length || conflicts.some(file => ![planName, decisionName].includes(file)))) {
@@ -272,6 +295,7 @@ export function mergeLane({ cwd, config = {}, lane, runBranch, tasks, child, pla
     await output(cwd, ['add', '--', planName, ...(existsSync(decisions) ? [decisionName] : [])]);
     const pending = await git(cwd, ['rev-parse', '--verify', 'MERGE_HEAD']);
     if (pending.exitCode === 0) await output(cwd, ['-c', 'commit.gpgsign=false', 'commit', '--no-verify', '-m', `Merge lane ${lane.letter}`]);
+    result.mergeCommit = (await output(cwd, ['rev-parse', 'HEAD'])).trim();
     result.merged = true;
     for (const task of selected.filter(task => done.includes(task.id))) {
       const commands = [];

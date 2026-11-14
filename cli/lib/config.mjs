@@ -28,11 +28,19 @@ export function readConfig(cwd = process.cwd(), home = homedir(), warn = console
   const config = configDefaults(home);
   config.paths.temp = relative(cwd, tempDir(cwd));
   const found = [];
-  for (const path of [join(home, '.ff/config.json'), join(cwd, '.ff/config.json')]) {
+  let userExecutors;
+  let projectExecutors = [];
+  for (const [index, path] of [join(home, '.ff/config.json'), join(cwd, '.ff/config.json')].entries()) {
+    // Snapshot before project overrides; attach derived tables after merging all file keys.
+    if (index === 1) userExecutors = { ...config.executors };
     let value;
     try { value = JSON.parse(readFileSync(path, 'utf8')); found.push(path); }
     catch (error) { if (error.code !== 'ENOENT') warn(`${path}: ${error.message}; using defaults`); continue; }
     if (!value || typeof value !== 'object' || Array.isArray(value)) { warn(`${path}: expected an object; using defaults`); continue; }
+    if (index === 1 && Object.hasOwn(value, 'executors')) {
+      warn(`${path}: project executors apply to builders; review and council only use built-in and ~/.ff/config.json executors.`);
+      if (value.executors && typeof value.executors === 'object' && !Array.isArray(value.executors)) projectExecutors = Object.keys(value.executors);
+    }
     for (const [key, item] of Object.entries(value)) {
       if (!Object.hasOwn(config, key)) warn(`${path}: unknown key ${key}`);
       if (['roles', 'executors', 'review', 'run', 'update', 'cleanup', 'paths'].includes(key)) {
@@ -47,7 +55,7 @@ export function readConfig(cwd = process.cwd(), home = homedir(), warn = console
       } else config[key] = item;
     }
   }
-  return { config, found };
+  return { config: { ...config, userExecutors, projectExecutors }, found };
 }
 export function resolveBuilder(config, role = config.roles.builder) {
   if (role === 'host') return { note: 'builder is host: run this card in a clean host sub-agent or configure roles.builder' };
