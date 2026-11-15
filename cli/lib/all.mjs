@@ -17,6 +17,7 @@ import { docsHints } from './docs.mjs';
 import { adjudicateReview, diagnoseFailure, redactSecrets, reviewChange } from './review.mjs';
 import { planPath, planningFile } from './paths.mjs';
 import { planLanes, runLanes, forwardLaneStop, laneSummary } from './lanes.mjs';
+import { openRunTemp } from './runtemp.mjs';
 
 const decisionsPath = run => relative(run.cwd, planningFile(run.cwd, run.config, 'DECISIONS.md'));
 
@@ -131,6 +132,8 @@ function settle(run, task, status, fields = {}) {
   run.tasks[task.id] = { ...run.tasks[task.id], title: task.title, status, ...fields };
   run.current = '';
   save(run);
+  // An executor tree that may still be alive may still use the folder; the next run or ff cleanup removes it.
+  if (!run.executorPid) run.temp?.clear();
 }
 
 const parkName = (run, task) => `ff/failed/${run.id.slice(0, 19)}/${task.id}-${++run.parks}`;
@@ -691,7 +694,7 @@ export async function runAll(args, root, cwd = process.cwd()) {
   }
   if (!options.foreground) return detach(args, cwd, newId());
   let id = options.id || newId();
-  let watcher;
+  let watcher, run;
   const lock = acquireLock(join(cwd, '.ff/run.lock'), options.force);
   if (!lock.ok) { console.error(`Worktree busy: ${lock.reason} (pid ${lock.pid ?? 'unknown'}). Use ff status; --force overrides.`); return 1; }
   try {
@@ -707,12 +710,17 @@ export async function runAll(args, root, cwd = process.cwd()) {
     }
     const adopted = options.lanes && adoptable ? last : null;
     if (adopted) id = adopted.id;
-    const run = {
+    run = {
       id, dir: join(cwd, '.ff/runs', id), cwd, root, config, builder, builderRole: config.roles.builder, plan: options.plan, minutes: options.minutes, only: options.only,
       pid: process.pid, startedAt: new Date().toISOString(), status: 'running', current: '', tasks: {},
       settled: new Set(), leads: new Set(), leadRuns: 0, consultDir: process.env.FF_LANE && process.env.FF_CONSULT_DIR || join(cwd, '.ff/runs', id, 'consults'), planNotes: [], parks: 0, limitWaits: 0, rules: playbookRules(root),
     };
     for (const note of plan.notes) console.error(`Note: ${note}`);
+    // Before the checkpoint commit, so the folder is git-ignored before anything lands in it.
+    run.temp = await openRunTemp({ id, cwd, config, note: message => {
+      console.error(message);
+      if (!run.tempNoted && message.startsWith('Run temp folder')) { run.tempNoted = true; run.planNotes.push(message); }
+    } });
     if (adopted) {
       Object.assign(run, { lanes: adopted.lanes, branch: adopted.branch, good: adopted.good, tasks: adopted.tasks, startedAt: adopted.startedAt, repo: true });
       const branch = await withLaneGit(() => git(cwd, ['branch', '--show-current']));
@@ -736,6 +744,7 @@ export async function runAll(args, root, cwd = process.cwd()) {
     return await finish(run);
   } finally {
     clearInterval(watcher);
+    run?.temp?.close({ keep: Boolean(run.executorPid) });
     releaseLock(lock);
   }
 }

@@ -58,7 +58,7 @@ Paths are relative to the working directory unless absolute. When `paths.temp` i
 
 `status [--plan <path>]` shows the selected plan and latest run. If an explicit `--plan` differs from the latest run's plan, it prints that run's plan path and does not use its task or lane states for the selected plan. Equivalent relative and absolute paths still match. Plans use an explicit `--plan` first, then the latest run's plan when recorded, then root `PLAN.md` if present, then `<planning>/PLAN.md`. Decisions and follow-ups prefer `<planning>/DECISIONS.md` and `<planning>/FOLLOWUPS.md`, fall back to existing root files, and use the planning folder for new files.
 
-When there is something to clean, `status` ends with one line such as `Cleanup: 2 merged worktrees, 3 merged ff/* branches, 1 failed branch older than 30 days. Run ff wt clean and ff cleanup to see them.` It counts clean managed worktrees and `ff/*` branches whose tip is in the default branch, `ff/failed/*` branches with no commit in 30 days, and `.ff` records beyond retention. It uses local git only, never fetches or calls `gh`, checks all `ff/*` branches with one `git for-each-ref --merged`, and any error in the count is skipped silently.
+When there is something to clean, `status` ends with one line such as `Cleanup: 2 merged worktrees, 3 merged ff/* branches, 1 failed branch older than 30 days. Run ff wt clean and ff cleanup to see them.` It counts clean managed worktrees and `ff/*` branches whose tip is in the default branch, `ff/failed/*` branches with no commit in 30 days, `.ff` records beyond retention, and leftover run temp folders that `cleanup` would remove, with their total size. It uses local git only, never fetches or calls `gh`, checks all `ff/*` branches with one `git for-each-ref --merged`, and any error in the count is skipped silently.
 
 ## Agents
 
@@ -85,6 +85,16 @@ Add `Covers: cli/**, scripts/*.mjs` within the first 20 lines of a Markdown file
 ## One card
 
 `run <card file> [--timeout-min <n>] [--force]` starts the builder once and then runs the card's `Accept:` commands itself. `Accept: <command>` works on each line, as does one command per line under a bare `Accept:`. Results are in `.ff/runs/<id>/`. Exit 0 means acceptance passed, or the card had none and the run is `unverified`.
+
+## Run temp folder
+
+`run` and `run --all` point `TEMP`, `TMP`, and `TMPDIR` at `<temp>/tmp/<run id>/` for every process they start: the builder, acceptance commands, diagnosis, consults, the lead, reviewers, lane setup, and lane controllers. `<temp>` is the project's temp folder as `init` resolves it (`paths.temp`, or an existing `temp/`, `temp-ignore/`, or `tmp/`). Only the run's own processes change; the shell that started `ff` and every other variable, such as `SystemRoot`, `PATHEXT`, and `USERPROFILE`, stay as they are. A lane controller uses the temp folder of its own worktree. The folder is named by the run id's 8-character random suffix, plus the lane letter for a lane (`temp/tmp/1a2b3c4d/`, `temp/tmp/1a2b3c4d-A/`), so socket paths and deep tool paths stay short; the full id is used when another run holds that name.
+
+Before writing there, the run checks with `git check-ignore` that the folder is ignored and, if not, adds `/<temp>/tmp/` to the common git directory's `info/exclude`, so nothing in it is committed even in a project that never ran `init`; lane worktrees share that file. If the folder cannot be created or ignored, the run says so in a `Note:` line and its processes keep the usual temp folder. On macOS and Linux, tools create Unix sockets in `TMPDIR`, and a socket path stops at 104 bytes. When the folder path leaves fewer than 40 bytes of that, the files still live in the project, but the variables point at a short link to the folder in the system temp folder, such as `/tmp/ff-1a2b3c4d`, recorded in `.ff-run.json`. The link is removed with the folder: when the run ends, at a later run start, or by `cleanup`, which remove only a recorded `ff-` link that still points at that folder, and never follow it. Only if no short enough link can be made does the run keep the usual temp folder, with a `Note:` line. Windows is not affected.
+
+The folder is emptied each time a task settles and removed when the run ends. At every run start, folders under `<temp>/tmp/` whose run is confirmed over are removed, so a crash leaves nothing behind for long: each folder holds `.ff-run.json` with the run id, project path, controller PID, and host name, and a run counts as over when, as `status` judges it, neither its controller nor a recorded executor is alive; without its `run.json`, when the PID in `.ff-run.json` is dead. A folder whose run cannot be confirmed over, without `.ff-run.json`, or made on another host (a project synced between machines, where local PIDs prove nothing) is kept. While an executor tree may still be alive (a timeout whose tree kill was not confirmed, so the run records its PID), the folder is neither emptied nor removed; the next run start or `cleanup` removes it once that process is gone. A file that cannot be removed, such as one locked on Windows, never fails a task: the run prints a note and, for a plan, adds it to the summary once; `cleanup` removes it later. Removal never follows links and keeps links, names containing `backup`, `bak`, or `备份`, and, on Windows, read-only files with more than one hard link; nothing outside `<temp>/tmp/` is touched.
+
+A project in a synced folder (Dropbox, OneDrive, iCloud) can exclude `temp/` from syncing; this is optional.
 
 ## Whole plans
 
@@ -168,6 +178,8 @@ Unticked tasks in the plan's `Tasks` section prevent archiving, with a message e
 ## Cleanup
 
 `cleanup [--apply] [--keep <n>] [--days <n>]` previews old entries in `.ff/runs`, `.ff/reviews`, and `.ff/councils`. In each directory it keeps the newest 20 entries by modification time and only removes entries older than 30 days. Configure `cleanup: { keep, days }` or override either value with a non-negative integer flag. `--apply` performs the deletions and reports entry counts, branch counts, and file bytes freed.
+
+It also removes run temp folders under `<temp>/tmp/` that carry `.ff-run.json`, have had no change for a day, and whose run is not confirmed live, as `Would remove run temp folder <path>` in preview and `Removed run temp folder <path>` with `--apply`. Folders without `.ff-run.json` are never removed, and `<temp>/tmp/` is not part of the listed-only temp entries.
 
 Live runs and surviving executors are preserved. Names containing `backup`, `bak`, or `备份`, including nested names, protect the whole entry. Linked entries and linked cleanup directories are skipped with diagnostics; paths outside the three directories are never deleted. A failed item does not stop other items.
 

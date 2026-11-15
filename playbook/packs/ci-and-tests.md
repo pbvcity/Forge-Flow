@@ -67,7 +67,9 @@ Parallel jobs that share a database, cache, port, or temp directory will collide
 ## Flaky and slow tests
 
 - A flaky test is a bug in the test or the code. Find the cause. Retries only hide it, and a timeout that passes on a quiet machine fails under load.
-- Tests own their environment: temp directories, home, and ports. Nothing depends on the machine or on another test's order.
+- Tests own their environment: temp directories, home, and ports. Generated output (fake projects, temp configs, browser profiles) goes in a folder the run alone owns under this checkout's `temp/`, or in a directory the test removes; never shared across projects, never another parallel run's folder, nothing left in the system temp folder. Nothing depends on the machine or on another test's order.
+- When tests write temp files, the test entry itself (a setup file or the runner config) points `TEMP`, `TMP`, and `TMPDIR` at that per-run folder, for its own process tree only, never the global or user environment. Check every real entry: the standard test command, a single file run directly, bench and smoke scripts, and CI.
+- Before removing test output, stop the servers, browsers, and child processes the tests started. Report a failed removal and keep what cannot be safely deleted; a forced kill can still leave some behind.
 - A check true only at one moment, such as a commit or a date, stays out of the regular suite.
 - Keep reverse proofs, where you remove a fix to see a test fail, as one-time evidence. A mutation chain does not belong in the daily suite.
 - Evidence goes in as small text receipts. Screenshots and full logs stay out of git.
@@ -86,7 +88,7 @@ What to do:
 
 - Move checks earlier. A problem that only the full run catches, but a check of tens of seconds would find, belongs in the quick check before handing work in.
 - Decide by the scope of the change whether the slowest verification runs at all.
-- Give tests their own resources (ports, databases, temp directories) before running them in parallel.
+- Give tests their own resources (ports, databases, temp directories they remove or keep under the project's `temp/`) before running them in parallel.
 - Batch several pieces of work and run the full suite once for all of them.
 - Delete checks that were true only at one moment, duplicate tests, and tests that copy the implementation. Write one reason per deletion.
 - Judge by the real durations and the rework causes of the last few batches, not by how it feels.

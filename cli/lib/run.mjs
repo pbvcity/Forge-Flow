@@ -11,6 +11,7 @@ import { readPlan, holdOn } from './plan.mjs';
 import { dueFollowupLines } from './followups.mjs';
 import { planPath, planningFile } from './paths.mjs';
 import { laneRecord } from './lanes.mjs';
+import { openRunTemp } from './runtemp.mjs';
 
 export const runExcludes = ['**/.ff/runs/', '**/.ff/run.lock', '**/.ff/reviews/', '**/.ff/stop-request'];
 export const newId = () => `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
@@ -186,19 +187,25 @@ export async function runCard(args, root, cwd = process.cwd()) {
   if (!builder.cmd) { console.error(builder.note); return 1; }
   const lock = acquireLock(join(cwd, '.ff/run.lock'), force);
   if (!lock.ok) { console.error(`Worktree busy: ${lock.reason} (pid ${lock.pid ?? 'unknown'}). Use ff status; --force overrides.`); return 1; }
+  let temp, keepTemp = false;
   try {
     const last = latestRun(cwd);
     if (!force && executorIsLive(last)) { console.error(`An executor from the last run is still alive (pid ${last.executorPid}). Stop it, or use --force.`); return 1; }
     await excludeGitEntries(cwd, runExcludes);
     const id = newId(), dir = join(cwd, '.ff/runs', id), startedAt = new Date().toISOString();
+    temp = await openRunTemp({ id, cwd, config });
     const title = card.split(/\r?\n/).find(line => line.startsWith('# '))?.slice(2) ?? file;
     const save = fields => atomicWrite(join(dir, 'run.json'), JSON.stringify({ id, kind: 'card', pid: process.pid, startedAt, ...fields }));
     save({ status: 'running', current: title });
     const result = await attempt({ builder, prompt: workerPrompt(card, builder, root, cwd, config), commands: acceptanceCommands(card), cwd, dir, minutes, onPid: pid => save({ status: 'running', current: title, executorPid: pid }) });
+    keepTemp = Boolean(result.treeUnconfirmed);
     const state = { passed: 'done', failed: 'failed', blocked: 'blocked', unverified: 'unverified' }[result.status];
     const note = `${title}: ${state}${result.note ? ` — ${result.note}` : ''}`;
     save({ status: state, note, acceptance: result.acceptance.map(({ command, exitCode, passed, durationMs }) => ({ command, exitCode, passed, durationMs })), ...(result.treeUnconfirmed ? { executorPid: result.pid } : {}) });
     console.log(`${id}: ${note} — ${dir}`);
     return ['passed', 'unverified'].includes(result.status) ? 0 : 1;
-  } finally { releaseLock(lock); }
+  } finally {
+    temp?.close({ keep: keepTemp });
+    releaseLock(lock);
+  }
 }

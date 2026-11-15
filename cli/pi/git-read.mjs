@@ -117,6 +117,7 @@ export const gitReadEnv = format => {
 function gitQuery(args, { cwd, env = gitReadEnv(), signal, timeoutMs = gitReadLimit.setupMs }) {
   return new Promise(done => {
     if (signal?.aborted) { done({ error: 'cancelled' }); return; }
+    if (timeoutMs <= 0) { done({ error: `git ${args[0]} timed out` }); return; }
     const child = spawn('git', args, { cwd, env, windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] });
     const out = [];
     let settled = false;

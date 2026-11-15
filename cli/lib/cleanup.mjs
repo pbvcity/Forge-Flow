@@ -5,6 +5,7 @@ import { jsonFile } from './fsx.mjs';
 import { git } from './git.mjs';
 import { realPath, samePath, tempDir, worktreeRoot } from './paths.mjs';
 import { runIsLive, executorIsLive } from './run.mjs';
+import { removeRunTemp, staleRunTemp } from './runtemp.mjs';
 import { mergeContext, mergedProof, listWorktrees } from './worktree.mjs';
 
 // Temporary value: failed branches and temp entries untouched this long are listed as stale, never deleted.
@@ -97,7 +98,8 @@ export function staleTempEntries(cwd, config, cutoff = Date.now() - STALE_DAYS *
   for (const kind of readdirSync(temp)) {
     const path = join(temp, kind);
     try {
-      if (kind === 'backups' || protectedName.test(kind) || !lstatSync(path).isDirectory() || lstatSync(path).isSymbolicLink()) continue;
+      // tmp/ holds ff run's own temp folders, which ff cleanup removes itself.
+      if (kind === 'backups' || kind === 'tmp' || protectedName.test(kind) || !lstatSync(path).isDirectory() || lstatSync(path).isSymbolicLink()) continue;
       const children = readdirSync(path).map(name => join(path, name)).filter(child => { try { return lstatSync(child).isDirectory(); } catch { return false; } });
       candidates.push(...(children.length ? children : [path]));
     } catch {}
@@ -135,6 +137,12 @@ export async function cleanup(args = [], cwd = process.cwd()) {
       count++; bytes += size;
       console.log(`${apply ? 'Removed' : 'Would remove'} ${path} (${size} bytes)`);
     } catch (error) { console.error(`Skipped ${path}: ${error.message}`); }
+  }
+  for (const { path, bytes: size } of staleRunTemp(cwd, config)) {
+    const left = apply ? removeRunTemp(path) : [];
+    if (left.length) { console.error(`Skipped ${path}: ${left.length} ${left.length === 1 ? 'entry' : 'entries'} could not be removed, first ${left[0]}`); continue; }
+    count++; bytes += size;
+    console.log(`${apply ? 'Removed' : 'Would remove'} run temp folder ${path} (${size} bytes)`);
   }
 
   const context = await mergeContext(cwd);
@@ -181,8 +189,11 @@ export async function cleanup(args = [], cwd = process.cwd()) {
 
 // Offline counts for ff status: local git only, no fetch, no gh. Any failure counts as zero.
 export async function cleanupCounts(cwd) {
-  const counts = { records: 0, worktrees: 0, branches: 0, failed: 0 };
+  const counts = { records: 0, worktrees: 0, branches: 0, failed: 0, runTemp: 0, runTempBytes: 0 };
   const { config } = readConfig(cwd, undefined, () => {});
+  try {
+    for (const { bytes } of staleRunTemp(cwd, config)) { counts.runTemp++; counts.runTempBytes += bytes; }
+  } catch {}
   try { counts.records = staleRecords(cwd, config.cleanup.keep, config.cleanup.days, () => {}).filter(({ group, path }) => group !== 'runs' || !active(path)).length; } catch {}
   let base = '';
   try { ({ base } = await mergeContext(cwd)); } catch {}
@@ -211,16 +222,19 @@ export async function cleanupCounts(cwd) {
   return counts;
 }
 
+const megabytes = bytes => bytes < 1048576 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1048576).toFixed(1)} MB`;
+
 export async function cleanupHint(cwd) {
-  const { records, worktrees, branches, failed } = await cleanupCounts(cwd);
+  const { records, worktrees, branches, failed, runTemp, runTempBytes } = await cleanupCounts(cwd);
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
   const parts = [
     worktrees && `${plural(worktrees, 'merged worktree')}`,
     branches && `${plural(branches, 'merged ff/* branch')}`.replace('branchs', 'branches'),
     failed && `${plural(failed, 'failed branch')} older than ${STALE_DAYS} days`.replace('branchs', 'branches'),
     records && `${plural(records, 'old record')} beyond retention`,
+    runTemp && `${plural(runTemp, 'leftover run temp folder')} (${megabytes(runTempBytes)})`,
   ].filter(Boolean);
   if (!parts.length) return '';
-  const commands = [worktrees && 'ff wt clean', (branches || failed || records) && 'ff cleanup'].filter(Boolean);
+  const commands = [worktrees && 'ff wt clean', (branches || failed || records || runTemp) && 'ff cleanup'].filter(Boolean);
   return `Cleanup: ${parts.join(', ')}. Run ${commands.join(' and ')} to see them.`;
 }

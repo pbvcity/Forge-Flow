@@ -1,11 +1,12 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { builtInExecutors, promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { autoSyncAgents } from './agents.mjs';
 import { runProcess, commandTemplate } from './proc.mjs';
+import { systemTemp } from './runtemp.mjs';
 import { atomicWrite } from './fsx.mjs';
 import { excludeGitEntries } from './git.mjs';
 import { collectChange, diffOptions, inventoryText } from './diff.mjs';
@@ -305,7 +306,7 @@ export async function runReadOnly(config, member, prompt, cwd, { timeoutMs, prom
     const executor = resolveReviewer(config, member, { legacyClaude, cwd });
     if (executor.note) return { executor };
     // The picked settings can hold credentials, so they go in a private temporary file, not on the command line or in summary.json.
-    const settingsDir = executor.claudeSettings ? mkdtempSync(join(tmpdir(), 'ff-claude-settings-')) : undefined;
+    const settingsDir = executor.claudeSettings ? mkdtempSync(join(systemTemp(), 'ff-claude-settings-')) : undefined;
     try {
       if (settingsDir) {
         const file = join(settingsDir, 'settings.json');
