@@ -76,6 +76,7 @@ Plan and review files are for work that needs them to survive a session. They ar
 - Tool success and sub-agent reports are claims. Read the actual diff and output.
 - Verified means implemented, wired into the real entry point, and exercised by the evidence that fits the work (see `./packs/ci-and-tests.md`). For code with logic, that is a passing behavior test. A stub, an unwired path, or a mocked subject is not done.
 - "Should work" means the evidence is missing. A condition with several clauses needs evidence for each.
+- Statements others will rely on about how the code behaves, in docs, release notes, published copy, or answers to factual questions, are claims too. Read every branch behind each one (conditions, limits, exceptions, config switches) and write those in. Then have a read-only sub-agent on a cheaper model check the draft against the source: give it the draft and the paths, not your conclusion. With none available, say the draft was not cross-checked.
 - Rerun executor results in an ordinary shell before merging.
 - Where a change has failure paths that matter, exercise them too: rejected input, error responses, fallbacks.
 - Mock only real external boundaries. Test doubles need production's queries, auth, and module resolution. Queries run on a real database when the project has one. Each plan needs a smoke run through the real path.

@@ -18,7 +18,7 @@ Ask what would show this works, and take the cheapest evidence that would catch 
 | Scripts and one-off work | A run on real or sample input, dry run before writing | A test file for code that will be deleted |
 | Prompts, skills, model output | Several real sample runs, judged on the outcome | Exact text matches |
 | Performance, concurrency | Before and after measurements, concurrent callers on the real path | Assertions on load-dependent timing |
-| Docs and copy | Link check and reading the diff | Everything else |
+| Docs and copy | Link check and reading the diff. Statements about behavior that others rely on: every branch behind them read with conditions and exceptions written in, then a cheaper read-only model checks the draft against the source, or the reply says it was not cross-checked | Writing from memory or from the main path alone |
 | Spikes and prototypes | Say it is throwaway, then show it once | Anything lasting, until it is kept |
 
 A fixed bug gets a test that fails without the fix whenever a test can express it. When none can, record how you reproduced it and how it now behaves. Report the evidence you used in a line.

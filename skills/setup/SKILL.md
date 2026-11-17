@@ -36,7 +36,7 @@ Who leads reviews? The default is the current model, since it holds the full con
 
 The lead reads every reviewer and decides. Missing models downgrade the workflow and never block it.
 
-`roles.fallback` is optional. It takes over only when the builder hits a provider limit, never a second attempt. `roles.consult` is optional: name the strongest model available, such as Fable, as an executor name or a `pi:` or `opencode:` role. It runs read-only and is asked only when the reviewer's diagnosis of a failed task is unclear, at most 2 times per run.
+`roles.fallback` is optional. It takes over only when the builder hits a provider limit, never a second attempt. `roles.consult` is optional: name the strongest model available, such as Fable, as an executor name or a `pi:` or `opencode:` role. It runs read-only and is asked only when the reviewer's diagnosis of a failed task is unclear, or when the diagnosis found a slip and the retry failed again, at most 2 times per run.
 
 ## 4. Write the file
 
