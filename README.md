@@ -34,9 +34,9 @@ The command-line tool needs Node 22 or newer. Then run setup once. It finds your
 |---|---|---|
 | `/ff:setup` | `$ff:setup` | `/ff-setup` |
 
-Then run `ff init` in each project where you will use Forge Flow. It previews the folders and the rules-file section it would add.
+Then, in each project where you will use Forge Flow, run init from your agent (`/ff:init`, `$ff:init`, or `/ff-init`), or `ff init` in a terminal. It previews the folders and the rules-file sections it would add, then adds them once you agree.
 
-If an agent is installing this for you: when the install succeeds, run setup together with the user, then offer `ff init` in the project they work in.
+If an agent is installing this for you: when the install succeeds, run setup together with the user, then offer init in the project they work in.
 
 ## Use
 
@@ -53,6 +53,8 @@ For unattended plans, `roles.fallback` takes over only after a provider limit; a
 | `/ff:auto` | `$ff:auto` | `/ff-auto` | Runs a whole plan unattended. |
 | `/ff:design` | `$ff:design` | `/ff-design` | Sets a visual direction and builds the project's design system. |
 | `/ff:council` | `$ff:council` | `/ff-council` | Asks several model families about a hard decision. |
+| `/ff:init` | `$ff:init` | `/ff-init` | Prepares a project: folders and the rules-file sections, previewed first. |
+| `/ff:cleanup` | `$ff:cleanup` | `/ff-cleanup` | Removes merged worktrees and branches and expired records; lists the rest for you. |
 | `/ff:update` | `$ff:update` | `/ff-update` | Updates through each host's own updater. |
 
 ## Read-only agents

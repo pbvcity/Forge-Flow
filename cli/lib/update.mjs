@@ -1,4 +1,6 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { runProcess } from './proc.mjs';
 import { git } from './git.mjs';
@@ -7,7 +9,9 @@ import { latestRun, runIsLive } from './run.mjs';
 
 const hosts = [
   { name: 'claude', list: ['plugin', 'list'], installed: /\bff@forge-flow\b/, commands: [['plugin', 'marketplace', 'update', 'forge-flow'], ['plugin', 'update', 'ff@forge-flow']], reload: '/reload-plugins or a new session' },
-  { name: 'codex', list: ['plugin', 'list', '--json'], installed: /\bff@forge-flow\b/, commands: [['plugin', 'marketplace', 'upgrade'], ['plugin', 'add', 'ff@forge-flow', '--json']], reload: 'restart Codex' },
+  // `codex plugin list` also waits on OpenAI's remote plugin catalog, up to 30 s a request, so a slow link
+  // made it miss the 60 s limit. The plugin cache shows the install without the network.
+  { name: 'codex', cached: () => existsSync(join(process.env.CODEX_HOME || join(homedir(), '.codex'), 'plugins/cache/forge-flow/ff')), list: ['plugin', 'list', '--json'], installed: /\bff@forge-flow\b/, commands: [['plugin', 'marketplace', 'upgrade'], ['plugin', 'add', 'ff@forge-flow', '--json']], reload: 'restart Codex' },
   { name: 'pi', list: ['list'], installed: /forge-flow/i, commands: [['update', '--extensions']], reload: '/reload or a new session' },
 ];
 
@@ -30,6 +34,7 @@ async function updateHost(host, cwd, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   for (const command of host.commands) {
     const result = await runProcess(host.name, command, { cwd, timeoutMs: Math.max(1, deadline - Date.now()) });
+    if (result.error && /\bENOENT\b/.test(result.error)) { console.log(`${host.name}: not installed; skipped`); return true; }
     if (result.exitCode !== 0 || result.timedOut || result.error) {
       console.log(`${host.name}: failed at "${host.name} ${command.join(' ')}": ${result.error ?? result.reason ?? (result.stderr.trim() || `exit ${result.exitCode}`)}`);
       return false;
@@ -49,6 +54,11 @@ export async function update(args = [], cwd = process.cwd()) {
   if (check) await updateStatus(cwd, config);
   let failures = 0;
   for (const host of hosts) {
+    if (host.cached?.()) {
+      if (check) console.log(`${host.name}: installed; ff update refreshes it`);
+      else if (!await updateHost(host, cwd, config.update.timeoutMs)) failures++;
+      continue;
+    }
     const list = await runProcess(host.name, host.list, { cwd, timeoutMs: 60000 });
     if (list.error && /\bENOENT\b/.test(list.error)) { console.log(`${host.name}: not installed; skipped`); continue; }
     if (list.exitCode !== 0 || list.error || list.timedOut) {

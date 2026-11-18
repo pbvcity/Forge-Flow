@@ -36,9 +36,9 @@ pi install git:github.com/pbvcity/Forge-Flow
 |---|---|---|
 | `/ff:setup` | `$ff:setup` | `/ff-setup` |
 
-然后在每个要用 Forge Flow 的项目里运行 `ff init`，它会先预览要添加的文件夹和规则文件段落。
+然后在每个要用 Forge Flow 的项目里，让 AI 运行 init（`/ff:init`、`$ff:init` 或 `/ff-init`），或在终端里运行 `ff init`。它会先预览要添加的文件夹和规则文件段落，你同意后再写入。
 
-如果是 Agent 在帮你安装：安装成功后，和用户一起完成配置，再提议在他正在做的项目里运行 `ff init`。
+如果是 Agent 在帮你安装：安装成功后，和用户一起完成配置，再提议在他正在做的项目里运行 init。
 
 ## 使用
 
@@ -57,6 +57,8 @@ OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角�
 | `/ff:auto` | `$ff:auto` | `/ff-auto` | 无人值守跑完整份计划。 |
 | `/ff:design` | `$ff:design` | `/ff-design` | 定视觉方向，并建立项目自己的设计体系。 |
 | `/ff:council` | `$ff:council` | `/ff-council` | 就难以判断的决定，请多家模型分别给意见。 |
+| `/ff:init` | `$ff:init` | `/ff-init` | 初始化项目：文件夹和规则文件段落，先预览再写入。 |
+| `/ff:cleanup` | `$ff:cleanup` | `/ff-cleanup` | 清掉已合并的工作树、分支和过期记录，其余列出来由你定。 |
 | `/ff:update` | `$ff:update` | `/ff-update` | 调用各宿主自带的更新方式。 |
 
 ## 它怎么决定

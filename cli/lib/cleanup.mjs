@@ -155,8 +155,8 @@ export async function cleanup(args = [], cwd = process.cwd()) {
     const proof = await mergedProof(cwd, name, tip.stdout.trim(), context);
     if (!proof.merged) { console.log(`Kept ${name}: ${proof.proof}`); continue; }
     merged.add(name);
-    if (!apply) { console.log(`Would delete merged branch ${name} (${proof.proof})`); branches++; continue; }
     if ((await listWorktrees(cwd)).some(entry => entry.branch === name)) { console.log(`Kept ${name}: checked out in a worktree`); continue; }
+    if (!apply) { console.log(`Would delete merged branch ${name} (${proof.proof})`); branches++; continue; }
     const result = await git(cwd, ['update-ref', '-d', `refs/heads/${name}`, tip.stdout.trim()]);
     if (result.exitCode === 0) { console.log(`Deleted merged branch ${name} (${proof.proof})`); branches++; }
     else console.error(`Skipped ${name}: ${result.stderr || result.error}`);
