@@ -96,18 +96,24 @@ export async function listWorktrees(cwd) {
   return entries;
 }
 
+// Names the first run record whose process may still be alive, or returns ''.
+// A record that reached a final status only has its controller left to exit, and Windows soon reuses that pid,
+// so only its executor counts: an executor tree can outlive the controller.
 export function liveRun(path) {
-  if (!existsSync(path)) return false;
+  if (!existsSync(path)) return '';
   if (lstatSync(path).isSymbolicLink()) throw new Error(`linked run records: ${path}`);
   for (const entry of readdirSync(path, { withFileTypes: true })) {
     const file = join(path, entry.name);
-    if (entry.isDirectory() && liveRun(file)) return true;
+    const nested = entry.isDirectory() ? liveRun(file) : '';
+    if (nested) return nested;
     if (entry.name === 'run.json') {
       const record = jsonFile(file);
-      if ([record?.pid, record?.executorPid].some(pid => pid && isAlive(pid) !== false)) return true;
+      const pids = record?.status && record.status !== 'running' ? [record.executorPid] : [record?.pid, record?.executorPid];
+      const pid = pids.find(pid => pid && isAlive(pid) !== false);
+      if (pid) return `pid ${pid} in ${file}`;
     }
   }
-  return false;
+  return '';
 }
 
 export function noLinks(path, boundary) {
@@ -192,7 +198,7 @@ export async function wt(args = [], cwd = process.cwd()) {
         continue;
       }
       if (status) throw new Error('dirty (tracked changes or untracked files)');
-      if (liveRun(join(path, '.ff/runs'))) throw new Error('run process alive');
+      { const live = liveRun(join(path, '.ff/runs')); if (live) throw new Error(`run process alive: ${live}`); }
       if (!proof.merged) throw new Error(proof.proof);
       const unsaved = await unsavedWork(path, !branch);
       if (unsaved) throw new Error(unsaved);
@@ -204,7 +210,7 @@ export async function wt(args = [], cwd = process.cwd()) {
         if (await checked(path, readStatus)) throw new Error('worktree became dirty');
         const late = await unsavedWork(path, !branch);
         if (late) throw new Error(late);
-        if (liveRun(join(path, '.ff/runs')) || liveRun(join(archive, '.ff/runs'))) throw new Error('run process alive');
+        { const live = liveRun(join(path, '.ff/runs')) || liveRun(join(archive, '.ff/runs')); if (live) throw new Error(`run process alive: ${live}`); }
         const symbolic = await git(path, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
         if (branch ? symbolic.stdout.trim() !== branch : symbolic.exitCode === 0) throw new Error('checked-out branch changed');
         if (await checked(path, ['rev-parse', 'HEAD']) !== head || (branch && await checked(cwd, ['rev-parse', `refs/heads/${branch}`]) !== head)) throw new Error('branch tip changed');

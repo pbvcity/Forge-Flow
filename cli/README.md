@@ -72,7 +72,7 @@ A Codex agent inherits the session's permissions, so its read-only rule is an in
 
 `init [--apply]` previews repository setup without writing files. With `--apply`, it creates `docs/`, the configured planning folder, and the detected or configured temp folder with `scripts/`, `logs/`, `scratch/`, `snapshots/`, `backups/`, and `worktree-archive/`. It creates no placeholder files.
 
-It appends a temp ignore entry only when `git check-ignore` says one is needed, preserving existing lines and negations, and ensures ff runtime exclusions in the common git directory. It appends a `Files and folders` block to existing `AGENTS.md`, otherwise existing `CLAUDE.md`, otherwise a new `AGENTS.md`. The block reminds agents to reread the plan and run `ff status` after compaction or resume. An existing block is left alone; no second rules file is created. Repeated runs preserve existing content. `doctor` reports whether the block is present and the temp folder is ignored.
+It appends a temp ignore entry only when `git check-ignore` says one is needed, preserving existing lines and negations, and ensures ff runtime exclusions in the common git directory. It appends a `Files and folders` block and a `Notifications` block to existing `AGENTS.md`, otherwise existing `CLAUDE.md`, otherwise a new `AGENTS.md`. The first reminds agents to reread the plan and run `ff status` after compaction or resume; the second tells them when to write `<!-- ff-done -->` or `<!-- ff-await -->` and when to run `ff notify send`, so sessions that never load the go skill still know. Each block is checked by its own heading, so an older project gains the notice rule on the next `--apply`. An existing block is left alone; no second rules file is created. Repeated runs preserve existing content. `doctor` reports whether each block is present and the temp folder is ignored.
 
 ## Docs
 
@@ -149,9 +149,9 @@ When notifications are configured, the shared `SessionStart` hook checks the ses
 
 ## Notify
 
-`notify` shows which channels are on, and `notify --test` sends a test message. Settings live in `~/.ff/notify.env`, and environment variables override them: `FF_NOTIFY_WEBHOOK`, `FF_TELEGRAM_BOT_TOKEN`, `FF_TELEGRAM_CHAT_ID`, `FF_NOTIFY_MIN_MINUTES` (default 5), and `FF_NOTIFY_LANG` (`en` or `zh`).
+`notify` shows which channels are on, and `notify --test` sends a test message. `notify send [--await] <text>` sends the text now, titled "Message" / 「消息」, or "Waiting for you" / 「等你回应」 with `--await`; it exits 1 when nothing is configured or every channel fails. Because the agent calls it on purpose, it sends from any process, including those `ff` started. Settings live in `~/.ff/notify.env`, and environment variables override them: `FF_NOTIFY_WEBHOOK`, `FF_TELEGRAM_BOT_TOKEN`, `FF_TELEGRAM_CHAT_ID`, and `FF_NOTIFY_LANG` (`en` or `zh`).
 
-`run --all` notifies by itself when a run ends, cannot start, or first pauses on a provider limit. Hosts notify through `hooks/` and `extensions/`. Processes started by `ff` carry `FF_CHILD=1` and stay silent. Hook state lives in `~/.ff/notify-state/`, and entries older than seven days are removed.
+`run --all` notifies by itself when a run ends, cannot start, or first pauses on a provider limit. Along the way, after each serial task, it sends `task-stuck` when the task ends failed or held, `phase-done` when every task under its `### <phase>` heading in `## Tasks` is done, and `task-done` when a task outside any phase is done. When the finished task completes every selected task, its `task-done` or `phase-done` is left to the run notice. A stopped run sends none of these. Tasks run inside lanes send none either: not done, stuck, or phase notices. With `--only`, counts and phases cover the selected tasks only. A `ff wait` watcher suppresses only `run-done`. Hosts notify through `hooks/` and `extensions/`. Processes started by `ff` carry `FF_CHILD=1` and stay silent. A Stop hook sends only when the final reply carries `<!-- ff-done -->` (`done`) or `<!-- ff-await -->` (`waiting`, which wins if both appear); the marker is removed from the text. Hook state for follow-ups and dead runs lives in `~/.ff/notify-state/`.
 
 Run events have distinct titles from session completion:
 
@@ -160,10 +160,11 @@ Run events have distinct titles from session completion:
 | `run-done` | Run finished | 后台运行完成 |
 | `run-failed` | Run did not finish | 后台运行未完成 |
 | `run-paused` | Run paused | 后台运行已暂停 |
+| `task-done` | Task finished | 后台任务完成 |
+| `phase-done` | Phase finished | 阶段完成 |
+| `task-stuck` | Task stuck | 任务卡住 |
 
-If a session is waiting through `ff wait`, a confirmed live watcher for that run suppresses `run-done`; failure and pause notices still send. Dead or unknown watcher PIDs are ignored. An interrupted run detected at session start uses `run-failed`. Session hook events and titles, including `done` ("Finished" / 「任务完成」), are unchanged.
-
-Turn hooks mark a notice before sending so overlapping Stop and idle_prompt events do not send twice. If every channel fails, the previous marker is restored so a later idle_prompt can retry; an intervening turn or notice keeps its newer state. One successful channel keeps the turn reported.
+If a session is waiting through `ff wait`, a confirmed live watcher for that run suppresses `run-done`; failure and pause notices still send. Dead or unknown watcher PIDs are ignored. An interrupted run detected at session start uses `run-failed`. Session hook titles are `done` ("Finished" / 「任务完成」) and `waiting` ("Waiting for you" / 「等你回应」).
 
 ## Protect
 

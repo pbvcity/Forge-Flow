@@ -11,8 +11,8 @@ import { isAlive } from './proc.mjs';
 const STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_DETAIL = 500;
 const LABELS = {
-  en: { done: 'Finished', waiting: 'Waiting for you', permission: 'Needs your approval', failed: 'Failed', paused: 'Paused', 'run-done': 'Run finished', 'run-failed': 'Run did not finish', 'run-paused': 'Run paused', followups: 'Follow-ups due', test: 'Test message' },
-  zh: { done: '任务完成', waiting: '等你回应', permission: '等你批准', failed: '出错了', paused: '已暂停', 'run-done': '后台运行完成', 'run-failed': '后台运行未完成', 'run-paused': '后台运行已暂停', followups: '有跟进到期', test: '测试消息' },
+  en: { done: 'Finished', waiting: 'Waiting for you', permission: 'Needs your approval', failed: 'Failed', paused: 'Paused', 'run-done': 'Run finished', 'run-failed': 'Run did not finish', 'run-paused': 'Run paused', 'task-done': 'Task finished', 'phase-done': 'Phase finished', 'task-stuck': 'Task stuck', followups: 'Follow-ups due', message: 'Message', test: 'Test message' },
+  zh: { done: '任务完成', waiting: '等你回应', permission: '等你批准', failed: '出错了', paused: '已暂停', 'run-done': '后台运行完成', 'run-failed': '后台运行未完成', 'run-paused': '后台运行已暂停', 'task-done': '后台任务完成', 'phase-done': '阶段完成', 'task-stuck': '任务卡住', followups: '有跟进到期', message: '消息', test: '测试消息' },
 };
 
 export function parseEnvFile(text) {
@@ -28,12 +28,10 @@ export function notifySettings(env = process.env, home = homedir()) {
   let file = {};
   try { file = parseEnvFile(readFileSync(join(home, '.ff/notify.env'), 'utf8')); } catch {}
   const value = key => String(env[key] ?? file[key] ?? '').trim();
-  const minutes = Number(value('FF_NOTIFY_MIN_MINUTES') || 5);
   return {
     webhook: value('FF_NOTIFY_WEBHOOK'),
     botToken: value('FF_TELEGRAM_BOT_TOKEN'),
     chatId: value('FF_TELEGRAM_CHAT_ID'),
-    minMinutes: Number.isFinite(minutes) && minutes >= 0 ? minutes : 5,
     lang: value('FF_NOTIFY_LANG') === 'zh' ? 'zh' : 'en',
   };
 }
@@ -176,7 +174,15 @@ export function attended(payload, env = process.env) {
   return true;
 }
 
-// One notice per turn: a long turn that reported done is not reported again when the prompt sits idle.
+// A turn ending says nothing about whether the work is done, so only the model's own marker in its final reply sends a notice.
+export const MARKERS = { waiting: '<!-- ff-await -->', done: '<!-- ff-done -->' };
+
+export function markedNotice(reply) {
+  const text = String(reply ?? '');
+  const event = text.includes(MARKERS.waiting) ? 'waiting' : text.includes(MARKERS.done) ? 'done' : undefined;
+  return event && { event, detail: Object.values(MARKERS).reduce((rest, marker) => rest.replaceAll(marker, ''), text).trim() };
+}
+
 export async function handleHook(payload, { env = process.env, home = homedir(), now = Date.now(), fetcher = fetch } = {}) {
   if (env.FF_CHILD) return { skipped: 'child process' };
   const settings = notifySettings(env, home);
@@ -190,37 +196,18 @@ export async function handleHook(payload, { env = process.env, home = homedir(),
     if (dead.skipped) return followups;
     return { sent: dead.sent + (followups.sent ?? 0), failed: [...dead.failed, ...(followups.failed ?? [])] };
   }
-  const { dir, file } = sessionFile(home, payload?.session_id ?? payload?.cwd ?? 'session');
-  const state = readSession(file);
-  if (name === 'UserPromptSubmit') {
-    writeFileSync(file, JSON.stringify({ started: now }));
-    prune(dir, now);
-    return { skipped: 'turn started' };
-  }
-  const reported = state.notified && state.notified >= (state.started ?? 0);
   let notice;
   if (name === 'Stop') {
-    if (payload.stop_hook_active || reported) return { skipped: 'already reported' };
-    if (state.started !== undefined && now - state.started < settings.minMinutes * 60000) return { skipped: 'short turn' };
-    const ending = String(payload.last_assistant_message ?? '').replace(/[\s*_`~]+$/u, '');
-    notice = { event: /[?？]$/u.test(ending) ? 'waiting' : 'done', detail: payload.last_assistant_message };
+    notice = markedNotice(payload.last_assistant_message);
+    if (!notice) return { skipped: 'no marker' };
   } else if (name === 'StopFailure') {
     notice = { event: 'failed', detail: payload.error_details ?? payload.last_assistant_message ?? payload.error };
   } else if (name === 'Notification' && payload.notification_type === 'permission_prompt') {
-    // Fires only for a dialog a person must answer, so each one counts and the turn can still report done.
+    // Fires only for a dialog a person must answer.
     if (payload.agent_id) return { skipped: 'sub-agent' };
-    return sendNotice({ event: 'permission', detail: payload.message, project: basename(payload.cwd ?? process.cwd()) }, { settings, home, fetcher });
-  } else if (name === 'Notification' && payload.notification_type === 'idle_prompt') {
-    if (reported) return { skipped: 'already reported' };
-    notice = { event: 'waiting', detail: payload.message };
+    notice = { event: 'permission', detail: payload.message };
   } else return { skipped: 'other event' };
-  writeFileSync(file, JSON.stringify({ ...state, notified: now }));
-  const result = await sendNotice({ ...notice, project: basename(payload.cwd ?? process.cwd()) }, { settings, home, fetcher });
-  if (!result.sent) {
-    const current = readSession(file);
-    if (current.started === state.started && current.notified === now) writeFileSync(file, JSON.stringify(state));
-  }
-  return result;
+  return sendNotice({ ...notice, project: basename(payload.cwd ?? process.cwd()) }, { settings, home, fetcher });
 }
 
 export async function notifyRun(cwd, event, detail, { runId, env = process.env, home = homedir(), fetcher = fetch } = {}) {
@@ -250,7 +237,16 @@ export async function notify(args, cwd = process.cwd()) {
     console.log(`Sent ${result.sent} of ${channels.length}.${result.failed.length ? ` Failed: ${result.failed.join(', ')}.` : ''}`);
     return result.failed.length ? 1 : 0;
   }
-  if (args.length) { console.error('usage: ff notify [--test]'); return 2; }
+  if (args[0] === 'send') {
+    const wait = args[1] === '--await';
+    const detail = args.slice(wait ? 2 : 1).join(' ').trim();
+    if (!detail) { console.error('usage: ff notify send [--await] <text>'); return 2; }
+    if (!channels.length) { console.error('Notifications are off: nothing configured in ~/.ff/notify.env.'); return 1; }
+    const result = await sendNotice({ event: wait ? 'waiting' : 'message', project: basename(cwd), detail }, { settings });
+    console.log(`Sent ${result.sent} of ${channels.length}.${result.failed.length ? ` Failed: ${result.failed.join(', ')}.` : ''}`);
+    return result.sent ? 0 : 1;
+  }
+  if (args.length) { console.error('usage: ff notify [--test | send [--await] <text>]'); return 2; }
   console.log(`Notifications: ${channels.length ? channels.join(', ') : 'off'}`);
   return 0;
 }

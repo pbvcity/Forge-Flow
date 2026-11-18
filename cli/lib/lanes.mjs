@@ -332,7 +332,7 @@ export function cleanLane({ cwd, config = {}, lane, runBranch, parentDir }) {
       if (!entry.branch || entry.branch !== lane.branch) throw new Error('lane branch changed');
       const check = async () => {
         if ((await output(path, ['--no-optional-locks', 'status', '--porcelain', '--untracked-files=all'])).trim()) throw new Error('dirty worktree');
-        if (liveRun(join(path, '.ff/runs'))) throw new Error('run process alive');
+        { const live = liveRun(join(path, '.ff/runs')); if (live) throw new Error(`run process alive: ${live}`); }
         if ((await output(path, ['symbolic-ref', '--short', 'HEAD'])).trim() !== entry.branch || (await output(cwd, ['rev-parse', `refs/heads/${entry.branch}`])).trim() !== entry.head) throw new Error('lane branch changed');
         await output(cwd, ['merge-base', '--is-ancestor', entry.head, `refs/heads/${runBranch}`]);
       };
@@ -344,7 +344,7 @@ export function cleanLane({ cwd, config = {}, lane, runBranch, parentDir }) {
       const kept = await archiveIgnored(path, archive, temp, true, runsArchive);
       if (kept.length) throw new Error(kept.join('; '));
       await check();
-      if (liveRun(runsArchive) || liveRun(join(archive, '.ff/runs'))) throw new Error('run process alive');
+      { const live = liveRun(runsArchive) || liveRun(join(archive, '.ff/runs')); if (live) throw new Error(`run process alive: ${live}`); }
       await output(cwd, ['worktree', 'remove', '--', path]);
       const deleted = await git(cwd, ['update-ref', '-d', `refs/heads/${entry.branch}`, entry.head]);
       const pruned = await git(cwd, ['worktree', 'prune']);

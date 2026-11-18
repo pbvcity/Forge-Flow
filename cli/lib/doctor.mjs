@@ -111,6 +111,7 @@ export async function doctor(cwd = process.cwd()) {
   }
   const layout = await initState(cwd, config);
   console.log(`Files and folders: ${layout.hasBlock ? 'present' : 'missing'} (${layout.rules})`);
+  console.log(`Notifications rule: ${layout.hasNotify ? 'present' : 'missing'} (${layout.rules})`);
   console.log(`Temp folder: ${layout.temp}/ (${layout.tempIgnored ? 'ignored' : 'not ignored'})`);
   console.log(`Model families: ${families.size} (inferred from CLI/model names; availability is not authentication)`);
   await updateStatus(cwd, config);

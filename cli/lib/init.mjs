@@ -17,10 +17,19 @@ export async function initState(cwd, config) {
   const worktrees = nameOf(cwd, worktreeRoot(cwd, config));
   const rules = existsSync(join(cwd, 'AGENTS.md')) ? 'AGENTS.md' : existsSync(join(cwd, 'CLAUDE.md')) ? 'CLAUDE.md' : 'AGENTS.md';
   const text = readOptional(join(cwd, rules));
-  const hasBlock = text.split(/\r?\n/).some(line => line.trimEnd() === '## Files and folders');
+  const headings = text.split(/\r?\n/).map(line => line.trimEnd());
+  const hasBlock = headings.includes('## Files and folders');
+  const hasNotify = headings.includes('## Notifications');
   const ignored = await git(cwd, ['check-ignore', '-q', `${temp}/x`]);
-  return { planning, temp, worktrees, rules, text, hasBlock, tempIgnored: ignored.exitCode === 0 };
+  return { planning, temp, worktrees, rules, text, hasBlock, hasNotify, tempIgnored: ignored.exitCode === 0 };
 }
+
+// Project rules are read in every session, so the notice rule reaches sessions that never load the go skill.
+const notifyBlock = `## Notifications
+
+- A turn ending sends nothing; you decide. End the final reply with \`<!-- ff-done -->\` when the work the user asked for is finished, or \`<!-- ff-await -->\` when you stop and need the user. Write neither on progress reports, while background work runs, or before more tool calls.
+- To reach the user mid-work, for example when a module or phase finishes or from a heartbeat, run \`ff notify send "<text>"\`, with \`--await\` when they must answer. Say what happened and what they should do.
+`;
 
 function rulesBlock({ planning, temp, worktrees }) {
   return `## Files and folders
@@ -40,7 +49,7 @@ export async function init(args = [], cwd = process.cwd()) {
   const apply = args.includes('--apply');
   const { config } = readConfig(cwd);
   const state = await initState(cwd, config);
-  const { planning, temp, worktrees, rules, text, hasBlock, tempIgnored } = state;
+  const { planning, temp, worktrees, rules, hasBlock, hasNotify, tempIgnored } = state;
   console.log(`Planning: ${planning}/\nTemp: ${temp}/\nWorktrees: ${worktrees}/`);
   let changed = 0;
   for (const dir of ['docs', planning, temp, ...['scripts', 'logs', 'scratch', 'snapshots', 'backups', 'worktree-archive'].map(name => join(temp, name))]) {
@@ -59,10 +68,13 @@ export async function init(args = [], cwd = process.cwd()) {
   } else console.log(`Temp already ignored: ${temp}/`);
   console.log(`${apply ? 'Ensuring' : 'Would ensure'} runtime entries in common git info/exclude: ${runExcludes.join(', ')}`);
   if (apply) await excludeGitEntries(cwd, runExcludes);
-  if (hasBlock) console.log(`${rules}: Files and folders already present; unchanged`);
-  else {
-    if (apply) appendFileSync(join(cwd, rules), `${text ? text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n' : ''}${rulesBlock(state)}`, 'utf8');
-    console.log(`${apply ? 'Appended' : 'Would append'} Files and folders to ${rules}`);
+  for (const [name, present, block] of [['Files and folders', hasBlock, rulesBlock(state)], ['Notifications', hasNotify, notifyBlock]]) {
+    if (present) { console.log(`${rules}: ${name} already present; unchanged`); continue; }
+    if (apply) {
+      const text = readOptional(join(cwd, rules));
+      appendFileSync(join(cwd, rules), `${text ? text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n' : ''}${block}`, 'utf8');
+    }
+    console.log(`${apply ? 'Appended' : 'Would append'} ${name} to ${rules}`);
     changed++;
   }
   console.log(`${apply ? 'Initialized' : 'Preview'}: ${changed} directory/rules/ignore changes${apply ? '.' : '; no files changed. Use --apply to initialize.'}`);

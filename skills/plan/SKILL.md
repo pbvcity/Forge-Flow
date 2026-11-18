@@ -34,6 +34,8 @@ Not doing: <what is out of scope, and optional items left out>
 
 ## Tasks
 
+### <phase, optional>
+
 - [ ] T1 <outcome of this task>
   Accept: `<runnable command>`
   Files: <every path or glob this task writes>
@@ -61,6 +63,7 @@ Omit `Executor:` to use `roles.builder`. A task's `Executor:` overrides that def
 - A task that changes behavior, a command, or configuration also lists the documents it makes out of date in `Files:`, so the same task updates them.
 - `Files:` decides what can run in parallel, so list every path the task writes. A task without `Files:`, a high-risk task, or one touching repository-wide files such as `package.json` runs serially. `Shared:` names a port, database, or service that two tasks cannot use at once.
 - Put the plan in the planning folder, `planning/PLAN.md` by default, or `planning/<topic>/PLAN.md` for several at once, run with `--plan`. An existing root `PLAN.md` still works.
+- When the work has stages, group tasks under `### <phase>` headings inside `## Tasks`. With configured notifications, a run then sends one message per finished phase instead of one per task.
 - Keep tasks to about 30 minutes each, since a process is stopped at 60. Split where write sets separate, and mark real dependencies only, so tasks can run independently.
 - High tier: add tasks for real-environment acceptance, the kill switch or rollback, and the before/after comparison.
 - Follow "Business decisions" in the playbook: choose details yourself, including prices and permissions. Only direction choices wait for an answer, and a ticked one no longer holds its tasks.

@@ -71,6 +71,8 @@ Run the project's checks before closing the branch: run commits skipped git hook
 
 After the PR merges, run `ff wt clean --apply` and `ff cleanup --apply` without asking: they delete only what is proven merged or expired. Anything they list but keep is for the user to decide.
 
+Notices: the run sends its own for each stuck task, each finished phase, each finished task outside a phase, and the end. Without the tool, run `node <this skill's directory>/../../cli/ff.mjs notify send "<text>"` at the same points. End your final reply with `<!-- ff-done -->` when the work is finished, or `<!-- ff-await -->` when it needs the user; write neither on progress reports.
+
 Going live and open items in `DECISIONS.md` follow the playbook: continue development, record provisional business decisions, and wait for confirmation of each open item the release carries before going live.
 
 When a plan is finished, `ff archive` moves it to `<planning folder>/done/`.

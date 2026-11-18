@@ -91,23 +91,23 @@ Forge Flow 可以在工作结束时通过 webhook、Telegram 或两者通知你�
 FF_TELEGRAM_BOT_TOKEN=<机器人令牌>
 FF_TELEGRAM_CHAT_ID=<会话 ID>
 FF_NOTIFY_WEBHOOK=<地址>
-FF_NOTIFY_MIN_MINUTES=5
 FF_NOTIFY_LANG=zh
 ```
 
 两个渠道可以只配一个。`ff notify --test` 发送测试消息。
 
-通知会注明机器名。一轮以提问结束时，会发送「等待你回应」（waiting）通知，而非「已完成」（done）。如果运行的主控进程意外退出，下次在该项目启动会话时会报告。每次发送尝试都会记入 `~/.ff/notify-log.jsonl`，只保留最近 200 次，不记录消息正文或秘密信息。
+通知会注明机器名。一轮结束本身不发通知，由 AI 判断：你交代的事做完了，它在最终回复末尾写 `<!-- ff-done -->`；需要你回应时写 `<!-- ff-await -->`；汇报进度时都不写。工作中途要找你（比如心跳时），它运行 `ff notify send "<内容>"`，需要你回答时加 `--await`。如果运行的主控进程意外退出，下次在该项目启动会话时会报告。每次发送尝试都会记入 `~/.ff/notify-log.jsonl`，只保留最近 200 次，不记录消息正文或秘密信息。
 
 | 时机 | Claude Code | Codex | Pi |
 |---|---|---|---|
 | `ff run --all` 结束、无法启动或因额度暂停 | 是 | 是 | 是 |
-| 运行至少 `FF_NOTIFY_MIN_MINUTES` 分钟的一轮结束 | 是 | 是 | 是 |
+| `ff run --all` 途中：任务卡住，或一个阶段完成，或不属于任何阶段的任务完成 | 是 | 是 | 是 |
+| AI 把回复标为完成或等你回应 | 是 | 是 | 是 |
+| AI 运行 `ff notify send` | 是 | 是 | 是 |
 | 一轮因 API 错误结束 | 是 | 否 | 是 |
-| 输入框空闲，等你回应 | 是 | 否 | 否 |
 | 主会话弹出权限请求，需要你批准 | 是 | 否 | 否 |
 
-每轮最多发一条，权限弹窗除外，每个弹窗发一条。只有你正在使用的交互会话会发：子代理、`claude -p` 或 `codex exec` 这类无界面运行、ff 启动的进程都不发，自动批准的请求也不发。消息会截短，已知的密钥格式会被隐藏。发送失败不影响工作。Codex 要先用 `/hooks` 信任一次插件的钩子才会运行。
+每个权限弹窗发一条。只有你正在使用的交互会话会发：子代理、`claude -p` 或 `codex exec` 这类无界面运行、ff 启动的进程都不发，自动批准的请求也不发。`ff notify send` 例外：AI 运行它就会发。消息会截短，已知的密钥格式会被隐藏。发送失败不影响工作。Codex 要先用 `/hooks` 信任一次插件的钩子才会运行。
 
 ## 保护主分支
 
@@ -126,7 +126,7 @@ ff init            # 预览
 ff init --apply    # 创建缺少的部分
 ```
 
-`init` 会建好 `docs/`、存放计划、待定事项和跟进事项的 `planning/`，以及被 git 忽略的 `temp/`，里面按 `scripts/`、`logs/`、`scratch/`、`snapshots/`、`backups/` 分类。它会在 `AGENTS.md` 末尾加一节简短的「Files and folders」，并沿用项目已有的命名，比如 `temp-ignore/`。worktree 放在仓库旁边的 `../<仓库名>-worktree/`。
+`init` 会建好 `docs/`、存放计划、待定事项和跟进事项的 `planning/`，以及被 git 忽略的 `temp/`，里面按 `scripts/`、`logs/`、`scratch/`、`snapshots/`、`backups/` 分类。它会在 `AGENTS.md`（或已有的 `CLAUDE.md`）末尾加上简短的「Files and folders」和「Notifications」两节，只补缺的，所以老项目重跑一次就能补上通知规则。它还会沿用项目已有的命名，比如 `temp-ignore/`。worktree 放在仓库旁边的 `../<仓库名>-worktree/`。
 
 `ff docs` 会根据改动的文件列出可能需要更新的文档。在文档开头写 `Covers: <通配符>` 就能把它和代码关联起来。
 

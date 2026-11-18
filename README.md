@@ -96,23 +96,23 @@ Forge Flow can tell you when work ends, by webhook, Telegram, or both. Nothing i
 FF_TELEGRAM_BOT_TOKEN=<bot token>
 FF_TELEGRAM_CHAT_ID=<chat id>
 FF_NOTIFY_WEBHOOK=<url>
-FF_NOTIFY_MIN_MINUTES=5
 FF_NOTIFY_LANG=en
 ```
 
 Set either channel or both. `ff notify --test` sends a test message. `FF_NOTIFY_LANG` also takes `zh`.
 
-Notices name the machine. A turn that ends with a question is sent as "waiting" rather than "done". If a run's controller dies, it is reported when a session next starts in that project. Each send attempt is logged to `~/.ff/notify-log.jsonl`, keeping the last 200 attempts with no message text or secrets.
+Notices name the machine. A turn ending is not a notice by itself: the agent decides. It ends a final reply with `<!-- ff-done -->` when the work you asked for is finished, or `<!-- ff-await -->` when it needs you, and writes neither on progress reports. To reach you mid-work, for example from a heartbeat, it runs `ff notify send "<text>"`, with `--await` when you must answer. If a run's controller dies, it is reported when a session next starts in that project. Each send attempt is logged to `~/.ff/notify-log.jsonl`, keeping the last 200 attempts with no message text or secrets.
 
 | When | Claude Code | Codex | Pi |
 |---|---|---|---|
 | `ff run --all` ends, cannot start, or pauses on a provider limit | Yes | Yes | Yes |
-| A turn that ran at least `FF_NOTIFY_MIN_MINUTES` finishes | Yes | Yes | Yes |
+| During `ff run --all`: a task is stuck, or a phase finishes, or a task outside any phase finishes | Yes | Yes | Yes |
+| The agent marks a reply done or waiting for you | Yes | Yes | Yes |
+| The agent runs `ff notify send` | Yes | Yes | Yes |
 | A turn ends in an API failure | Yes | No | Yes |
-| The prompt sits idle waiting for you | Yes | No | No |
 | A permission dialog in the main session needs you | Yes | No | No |
 
-Each turn sends at most one message, apart from permission dialogs, which each send one. Only a session you are using sends anything: sub-agents, headless runs such as `claude -p` or `codex exec`, and processes ff starts stay silent, and so do requests approved automatically. Text is cut short and known secret patterns are hidden. A failed send never affects the work. Codex runs plugin hooks only after you trust them once with `/hooks`.
+Each permission dialog sends one message. Only a session you are using sends anything: sub-agents, headless runs such as `claude -p` or `codex exec`, and processes ff starts stay silent, and so do requests approved automatically. `ff notify send` is the exception: it sends whenever the agent runs it. Text is cut short and known secret patterns are hidden. A failed send never affects the work. Codex runs plugin hooks only after you trust them once with `/hooks`.
 
 ## Protect the main branch
 
@@ -131,7 +131,7 @@ ff init            # preview
 ff init --apply    # create what is missing
 ```
 
-`init` sets up `docs/`, a `planning/` folder for plans, decisions, and follow-ups, and a git-ignored `temp/` sorted into `scripts/`, `logs/`, `scratch/`, `snapshots/`, and `backups/`. It appends a short "Files and folders" section to `AGENTS.md`, and keeps names a project already uses, such as `temp-ignore/`. Worktrees live beside the repository in `../<repo>-worktree/`.
+`init` sets up `docs/`, a `planning/` folder for plans, decisions, and follow-ups, and a git-ignored `temp/` sorted into `scripts/`, `logs/`, `scratch/`, `snapshots/`, and `backups/`. It appends short "Files and folders" and "Notifications" sections to `AGENTS.md` (or an existing `CLAUDE.md`), adding only the ones missing, so rerunning it in an older project adds the notice rule. It keeps names a project already uses, such as `temp-ignore/`. Worktrees live beside the repository in `../<repo>-worktree/`.
 
 `ff docs` lists docs that may need an update for the files you changed. Mark a doc with `Covers: <glob>` near its top to link it to code.
 

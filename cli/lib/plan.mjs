@@ -36,7 +36,7 @@ function readField(task, name, value, notes) {
 
 export function parsePlan(text, config) {
   const lines = text.split(/\r?\n/), tasks = [], notes = [], holds = [];
-  let section = '', current = null, field = '', fence = false, hold = { open: false, text: '' };
+  let section = '', phase = '', current = null, field = '', fence = false, hold = { open: false, text: '' };
   for (const [index, line] of lines.entries()) {
     if (/^\s*```/.test(line)) { fence = !fence; continue; }
     if (fence) {
@@ -47,7 +47,9 @@ export function parsePlan(text, config) {
     }
     const heading = line.match(/^(#{1,6})\s+(.*)$/);
     if (heading) {
-      if (section !== 'tasks' || heading[1].length < 3) section = heading[2].trim().toLowerCase();
+      // A level-3 or deeper heading inside Tasks names a phase for the tasks under it.
+      if (section !== 'tasks' || heading[1].length < 3) { section = heading[2].trim().toLowerCase(); phase = ''; }
+      else phase = heading[2].trim();
       current = null; field = '';
       continue;
     }
@@ -61,7 +63,7 @@ export function parsePlan(text, config) {
     if (section !== 'tasks') continue;
     const match = line.match(/^(\s*[-*+]\s+\[)([ xX])(\]\s+)(T\d\w*(?:[.-]\w+)*)\s*[:.)-]?\s+(.+?)\s*$/i);
     if (match) {
-      current = { id: match[4].toUpperCase(), title: match[5], done: match[2].toLowerCase() === 'x', line: index, body: [], details: [], accept: [], depends: [], files: [], shared: [] };
+      current = { id: match[4].toUpperCase(), title: match[5], done: match[2].toLowerCase() === 'x', line: index, body: [], details: [], accept: [], depends: [], files: [], shared: [], ...(phase && { phase }) };
       field = '';
       tasks.push(current);
       continue;

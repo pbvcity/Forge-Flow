@@ -548,6 +548,26 @@ async function replan(run, task, evidence) {
   save(run);
 }
 
+// Progress between run notices: a task that stopped and needs a look, and a finished phase,
+// or each finished task outside a phase. The task that completes the run leaves the news to the run notice.
+async function reportProgress(run, task) {
+  const state = run.tasks[task.id];
+  if (!state || run.stop) return;
+  const notice = (event, detail) => notifyRun(run.cwd, event, detail, { runId: run.id });
+  if (state.status === 'failed' || state.status === 'held') return notice('task-stuck', [`${task.id} ${task.title}: ${state.status}.`, state.note].filter(Boolean).join(' '));
+  if (state.status !== 'done') return;
+  const plan = readPlan(run.cwd, run.plan, run.config);
+  const tasks = selectedTasks(plan, run);
+  const done = tasks.filter(item => item.done).length;
+  if (done === tasks.length) return;
+  const phases = [...new Set(tasks.map(item => item.phase).filter(Boolean))];
+  const phase = tasks.find(item => item.id === task.id)?.phase;
+  if (!phase) return notice('task-done', `${task.id} ${task.title} (${done}/${tasks.length})`);
+  if (!tasks.filter(item => item.phase === phase).every(item => item.done)) return;
+  const finished = phases.filter(name => tasks.filter(item => item.phase === name).every(item => item.done)).length;
+  return notice('phase-done', `${phase} (${finished}/${phases.length}; ${done}/${tasks.length} tasks)`);
+}
+
 function nextTask(plan, run) {
   return selectedTasks(plan, run).find(task => !task.done && !run.settled.has(task.id) && !holdOn(plan, task)
     && task.depends.every(id => plan.tasks.find(other => other.id === id)?.done));
@@ -740,6 +760,7 @@ export async function runAll(args, root, cwd = process.cwd()) {
         run.stop ??= `${task.id}: ${error.message}`;
         if (!run.tasks[task.id]?.status) settle(run, task, 'stopped', { note: run.stop });
       }
+      await reportProgress(run, task);
     }
     return await finish(run);
   } finally {
