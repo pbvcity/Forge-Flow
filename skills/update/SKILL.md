@@ -32,3 +32,5 @@ Leave other plugins and marketplaces alone. For other hosts, tell the user to us
 ## 3. Report
 
 For each host: version before, version after, and whether a reload or restart is needed. Bad releases are undone by installing an earlier tag, not by rollback code here. If a host fails, give its error and the command to retry.
+
+An update can change Forge Flow's rules, which project and user rules files keep in their own copy. After a reload, run `ff init --rules` (or `ff doctor`, line `Rules version`): when a file is behind, offer the init skill to align it. New sessions also say so on their own.

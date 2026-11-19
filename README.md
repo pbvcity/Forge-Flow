@@ -165,7 +165,7 @@ ff does not take review or council commands and arguments from repository config
 
 ## Update
 
-Run `/ff:update`, or use your host's own plugin update. Releases are tagged, so you can always pin an earlier one.
+Run `/ff:update`, or use your host's own plugin update. An update does not change the Forge Flow rules copied into your rules files, which agents often translate or adapt: when a new session says they are behind, or `ff doctor` shows an older `Rules version`, run `/ff:init` in that project. It compares meaning in any language, shows the edits, and changes nothing until you agree. Releases are tagged, so you can always pin an earlier one.
 
 ## License
 

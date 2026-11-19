@@ -1,9 +1,11 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
+import { join, relative, resolve } from 'node:path';
 import { readConfig } from './config.mjs';
 import { excludeGitEntries, git } from './git.mjs';
 import { planningDir, tempDir, worktreeRoot } from './paths.mjs';
 import { runExcludes } from './run.mjs';
+import { RULES_VERSION, fileRulesVersion, markRules, rulesFiles, rulesMarker, staleRules } from './rules.mjs';
 
 const nameOf = (cwd, path) => relative(cwd, path).replaceAll('\\', '/');
 function readOptional(path) {
@@ -21,7 +23,7 @@ export async function initState(cwd, config) {
   const hasBlock = headings.includes('## Files and folders');
   const hasNotify = headings.includes('## Notifications');
   const ignored = await git(cwd, ['check-ignore', '-q', `${temp}/x`]);
-  return { planning, temp, worktrees, rules, text, hasBlock, hasNotify, notifyOutdated: hasNotify && Boolean(olderNotify(text)), tempIgnored: ignored.exitCode === 0 };
+  return { planning, temp, worktrees, rules, text, hasBlock, hasNotify, tempIgnored: ignored.exitCode === 0 };
 }
 
 // Project rules are read in every session, so the notice rule reaches sessions that never load the go skill.
@@ -30,13 +32,6 @@ const notifyBlock = `## Notifications
 - A turn ending sends nothing; you decide. End the final reply with \`<!-- ff-done -->\` when the work the user asked for is finished, or \`<!-- ff-await -->\` when you stop and need the user. Write neither on progress reports, while background work runs, or before more tool calls. A turn woken by a heartbeat, a scheduled wakeup, or a background-task notice is not a new request: if it only reports progress, write no marker. Write each marker once; after \`<!-- ff-await -->\`, do not write it again until the user replies.
 - To reach the user mid-work, for example when a module or phase finishes or from a heartbeat, run \`ff notify send "<text>"\`, with \`--await\` when they must answer. Say what happened and what they should do. From a heartbeat, send only when something changed since your last notice.
 `;
-// Earlier Notifications sections ff wrote; an unedited one is replaced by the current text.
-const olderNotifyBlocks = [`## Notifications
-
-- A turn ending sends nothing; you decide. End the final reply with \`<!-- ff-done -->\` when the work the user asked for is finished, or \`<!-- ff-await -->\` when you stop and need the user. Write neither on progress reports, while background work runs, or before more tool calls.
-- To reach the user mid-work, for example when a module or phase finishes or from a heartbeat, run \`ff notify send "<text>"\`, with \`--await\` when they must answer. Say what happened and what they should do.
-`];
-const olderNotify = text => olderNotifyBlocks.find(block => text.replaceAll('\r\n', '\n').includes(block));
 
 function rulesBlock({ planning, temp, worktrees }) {
   return `## Files and folders
@@ -51,12 +46,40 @@ function rulesBlock({ planning, temp, worktrees }) {
 `;
 }
 
+// For the agent aligning rules: each file with ff rules, its version, what changed since, and the current
+// project sections. `--mark` records a file as aligned once the user has decided on the edits.
+function rulesCommand(args, cwd) {
+  if (args.length && (args[0] !== '--mark' || args.length < 2)) throw new Error('usage: ff init --rules [--mark <file>...]');
+  if (args[0] === '--mark') {
+    for (const file of args.slice(1)) {
+      const path = resolve(cwd, file.replace(/^~(?=[/\\])/, () => homedir()));
+      markRules(path);
+      console.log(`Marked ${path}: ${rulesMarker()}`);
+    }
+    return 0;
+  }
+  const files = rulesFiles(cwd);
+  console.log(`Current rules version: ${RULES_VERSION}`);
+  if (!files.length) { console.log('No rules file holds Forge Flow rules here.'); return 0; }
+  for (const file of files) {
+    console.log(`\n${file.label} (${file.scope}, ${file.path}): rules ${file.version}${file.changes.length ? '' : ', aligned'}`);
+    for (const line of file.changes) console.log(`  changed in ${line}`);
+  }
+  if (!files.some(file => file.changes.length)) return 0;
+  const { config } = readConfig(cwd, undefined, () => {});
+  const state = { planning: nameOf(cwd, planningDir(cwd, config)), temp: nameOf(cwd, tempDir(cwd, config)), worktrees: nameOf(cwd, worktreeRoot(cwd, config)) };
+  console.log(`\nCurrent project sections, in English:\n\n${rulesBlock(state)}\n${notifyBlock}`);
+  console.log(`The Delegation section for user rules files is in the setup skill, section 6.`);
+  return 0;
+}
+
 export async function init(args = [], cwd = process.cwd()) {
-  if (args.some(arg => arg !== '--apply')) throw new Error('usage: ff init [--apply]');
+  if (args[0] === '--rules') return rulesCommand(args.slice(1), cwd);
+  if (args.some(arg => arg !== '--apply')) throw new Error('usage: ff init [--apply] | ff init --rules [--mark <file>...]');
   const apply = args.includes('--apply');
   const { config } = readConfig(cwd);
   const state = await initState(cwd, config);
-  const { planning, temp, worktrees, rules, hasBlock, hasNotify, notifyOutdated, tempIgnored } = state;
+  const { planning, temp, worktrees, rules, hasBlock, hasNotify, tempIgnored } = state;
   console.log(`Planning: ${planning}/\nTemp: ${temp}/\nWorktrees: ${worktrees}/`);
   let changed = 0;
   for (const dir of ['docs', planning, temp, ...['scripts', 'logs', 'scratch', 'snapshots', 'backups', 'worktree-archive'].map(name => join(temp, name))]) {
@@ -75,25 +98,22 @@ export async function init(args = [], cwd = process.cwd()) {
   } else console.log(`Temp already ignored: ${temp}/`);
   console.log(`${apply ? 'Ensuring' : 'Would ensure'} runtime entries in common git info/exclude: ${runExcludes.join(', ')}`);
   if (apply) await excludeGitEntries(cwd, runExcludes);
+  // A file that held no ff rules is aligned once the blocks are added; an older one waits for review.
+  const before = fileRulesVersion(readOptional(join(cwd, rules)));
+  let appended = false;
   for (const [name, present, block] of [['Files and folders', hasBlock, rulesBlock(state)], ['Notifications', hasNotify, notifyBlock]]) {
-    if (present && name === 'Notifications' && notifyOutdated) {
-      if (apply) {
-        const text = readOptional(join(cwd, rules)), crlf = text.includes('\r\n');
-        const updated = text.replaceAll('\r\n', '\n').replace(olderNotify(text), () => notifyBlock);
-        writeFileSync(join(cwd, rules), crlf ? updated.replaceAll('\n', '\r\n') : updated, 'utf8');
-      }
-      console.log(`${apply ? 'Updated' : 'Would update'} ${name} in ${rules} to the current text`);
-      changed++;
-      continue;
-    }
     if (present) { console.log(`${rules}: ${name} already present; unchanged`); continue; }
     if (apply) {
       const text = readOptional(join(cwd, rules));
       appendFileSync(join(cwd, rules), `${text ? text.endsWith('\n\n') ? '' : text.endsWith('\n') ? '\n' : '\n\n' : ''}${block}`, 'utf8');
     }
     console.log(`${apply ? 'Appended' : 'Would append'} ${name} to ${rules}`);
+    appended = true;
     changed++;
   }
+  if (apply && appended && before === 0) markRules(join(cwd, rules));
+  const stale = staleRules(cwd);
+  if (stale.length) console.log(`Rules to align: ${stale.map(file => `${file.label} (rules ${file.version}, current ${RULES_VERSION})`).join(', ')}. See ff init --rules.`);
   console.log(`${apply ? 'Initialized' : 'Preview'}: ${changed} directory/rules/ignore changes${apply ? '.' : '; no files changed. Use --apply to initialize.'}`);
   return 0;
 }

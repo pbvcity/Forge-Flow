@@ -66,7 +66,7 @@ Create `~/.ff/my-rules.md` only if the user has rules to add. Do not overwrite o
 
 ## 5. Prepare the repository
 
-Run `node <this skill's directory>/../../cli/ff.mjs init` to preview the folders, ignore lines, and rules-file block it would add, then `init --apply` if they fit. It only adds what is missing, keeps existing names such as `temp-ignore/`, and never rewrites a rules file.
+Run `node <this skill's directory>/../../cli/ff.mjs init` to preview the folders, ignore lines, and rules-file block it would add, then `init --apply` if they fit. It only adds what is missing, keeps existing names such as `temp-ignore/`, and never rewrites a rules section; aligning older ones is the init skill's step 3.
 
 ## 6. Offer session model tiers
 
@@ -78,7 +78,7 @@ Check what the user already has. Read file names and `model` or effort lines onl
 - Codex: `~/.codex/agents/*.toml` with `model` or `model_reasoning_effort`, and `~/.codex/AGENTS.md`.
 - Pi has no sub-agents of its own, so only the delegation section applies, in `~/.pi/agent/AGENTS.md`.
 
-If tiers exist, report them and change nothing. Otherwise ask one question: lean toward lower cost, or toward quality? Then show the files and write them once the user agrees. Write only files that do not exist. Add the delegation section to the end of a rules file, and never rewrite what is there.
+If tiers exist, report them and change nothing. Otherwise ask one question: lean toward lower cost, or toward quality? Then show the files and write them once the user agrees. Write only files that do not exist. Add the delegation section to the end of a rules file, and never rewrite what is there. Then record the file as holding the current Forge Flow rules: `node <this skill's directory>/../../cli/ff.mjs init --rules --mark <file>`. Aligning an older delegation section after an update is the init skill's job.
 
 | Tier | Use for | Claude Code, lower cost | Claude Code, quality | Codex effort, lower cost | Codex effort, quality |
 |---|---|---|---|---|---|

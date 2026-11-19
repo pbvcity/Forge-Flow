@@ -9,6 +9,7 @@ import { updateStatus } from './update.mjs';
 import { notifyChannels, notifySettings } from './notify.mjs';
 import { protectionState } from './protect.mjs';
 import { initState } from './init.mjs';
+import { RULES_VERSION, rulesFiles } from './rules.mjs';
 import { agentsStatus, autoSyncAgents } from './agents.mjs';
 import { familyReport, seenFile } from './codexmodels.mjs';
 
@@ -126,7 +127,9 @@ export async function doctor(cwd = process.cwd()) {
   }
   const layout = await initState(cwd, config);
   console.log(`Files and folders: ${layout.hasBlock ? 'present' : 'missing'} (${layout.rules})`);
-  console.log(`Notifications rule: ${layout.notifyOutdated ? 'outdated' : layout.hasNotify ? 'present' : 'missing'} (${layout.rules})`);
+  console.log(`Notifications rule: ${layout.hasNotify ? 'present' : 'missing'} (${layout.rules})`);
+  const ruleFiles = rulesFiles(cwd);
+  console.log(`Rules version: ${RULES_VERSION} current; ${ruleFiles.length ? ruleFiles.map(file => `${file.label} ${file.version}${file.changes.length ? ' (align with the init skill)' : ''}`).join(', ') : 'no rules file holds Forge Flow rules'}`);
   console.log(`Temp folder: ${layout.temp}/ (${layout.tempIgnored ? 'ignored' : 'not ignored'})`);
   console.log(`Model families: ${families.size} (inferred from CLI/model names; availability is not authentication)`);
   await updateStatus(cwd, config);
