@@ -13,7 +13,7 @@ Follow `../../playbook/default.md` (relative to this skill's directory). Run eve
 node <this skill's directory>/../../cli/ff.mjs init
 ```
 
-It changes nothing and lists what it would add: missing folders (`docs/`, the planning folder, the temp folder sorted by kind), the temp ignore line, runtime git excludes, and the `Files and folders` and `Notifications` sections of the rules file (`AGENTS.md`, or an existing `CLAUDE.md`). It keeps names the project already uses, such as `temp-ignore/`, and leaves existing sections alone.
+It changes nothing and lists what it would add: missing folders (`docs/`, the planning folder, the temp folder sorted by kind), the temp ignore line, runtime git excludes, and the `Files and folders` and `Notifications` sections of the rules file (`AGENTS.md`, or an existing `CLAUDE.md`). It keeps names the project already uses, such as `temp-ignore/`, and leaves existing sections alone, except a `Notifications` section that is an unedited older version ff wrote: that one it updates to the current text. An edited or translated section stays as it is; if `ff doctor` still reports the rule outdated, or the section lacks the current rules, show the user the difference and update it by hand on a yes.
 
 ## 2. Apply
 

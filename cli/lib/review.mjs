@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { builtInExecutors, promptFileArgs, readConfig, resolveBuilder } from './config.mjs';
 import { autoSyncAgents } from './agents.mjs';
+import { modelRejectedNote } from './codexmodels.mjs';
 import { runProcess, commandTemplate } from './proc.mjs';
 import { systemTemp } from './runtemp.mjs';
 import { atomicWrite } from './fsx.mjs';
@@ -207,7 +208,7 @@ export function resolveReviewer(config, member, { quiet = false, legacyClaude = 
     description: 'Read-only Forge Flow reviewer', mode: 'primary',
     permission: { '*': 'deny', read: 'allow', grep: 'allow', glob: 'allow', list: 'allow' },
   } } }) } : undefined;
-  return { command: template.command, args: argv, env, restricted, claudeSettings, promptFile: resolved.promptFile, idleMinutes: resolved.idleMinutes, model: member.startsWith('pi:') ? member.slice(3) : model ?? 'unspecified (executor default)' };
+  return { command: template.command, args: argv, env, restricted, claudeSettings, promptFile: resolved.promptFile, idleMinutes: resolved.idleMinutes, family: resolved.family, model: member.startsWith('pi:') ? member.slice(3) : model ?? 'unspecified (executor default)' };
 }
 
 export function prepareReviewerPrompt(executor, prompt, cwd, promptPath) {
@@ -336,9 +337,10 @@ async function runReviewer(config, member, prompt, cwd, minutes, promptPath) {
   let status = environmentFailure || result.idleTimedOut ? 'failed' : result.timedOut ? 'timeout' : result.error || result.exitCode !== 0 || result.signal ? 'failed' : 'completed';
   const auth = status !== 'completed' && (authFailure(result.stderr.slice(-2000)) || (result.exitCode !== null && result.exitCode !== 0 && result.stdout.length < 2000 ? authFailure(result.stdout) : ''));
   if (auth) status = 'auth failed';
+  const rejected = status === 'failed' && !environmentFailure && !result.idleTimedOut ? modelRejectedNote(executor, result.stderr.slice(-2000)) : '';
   const warnings = [...parsed.warnings, ...(result.outputTruncated ? ['Output truncated: last 4 MiB per stream retained'] : [])];
   const verdict = environmentFailure || auth ? 'unknown' : parsed.verdict === 'PASS' && (status !== 'completed' || result.outputTruncated) ? 'unknown' : parsed.verdict;
-  const row = { ...base, verdict, warnings, ...(parsed.notRead ? { notRead: parsed.notRead } : {}), model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, ...(result.idleTimedOut ? { idleTimedOut: true, note: result.reason } : {}), ...(environmentFailure ? { note: environmentFailure } : {}), ...(auth ? { note: `${auth}; log in to ${executor.command} and rerun` } : {}), pid: result.pid, error: result.error };
+  const row = { ...base, verdict, warnings, ...(parsed.notRead ? { notRead: parsed.notRead } : {}), model: executor.model, command: [executor.command, ...executor.args], status, durationMs: result.durationMs, exitCode: result.exitCode, ...(result.idleTimedOut ? { idleTimedOut: true, note: result.reason } : {}), ...(environmentFailure ? { note: environmentFailure } : {}), ...(auth ? { note: `${auth}; log in to ${executor.command} and rerun` } : {}), ...(rejected ? { note: rejected } : {}), pid: result.pid, error: result.error };
   if (fallback) row.note = row.note ? `${row.note}; ${fallback}` : fallback;
   return { row, stdout: result.stdout, stderr: result.stderr, outputTruncated: result.outputTruncated };
 }

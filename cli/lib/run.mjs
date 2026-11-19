@@ -12,6 +12,7 @@ import { dueFollowupLines } from './followups.mjs';
 import { planPath, planningFile } from './paths.mjs';
 import { laneRecord } from './lanes.mjs';
 import { openRunTemp } from './runtemp.mjs';
+import { modelRejectedNote } from './codexmodels.mjs';
 
 export const runExcludes = ['**/.ff/runs/', '**/.ff/run.lock', '**/.ff/reviews/', '**/.ff/stop-request'];
 export const newId = () => `${new Date().toISOString().replace(/[:.]/g, '-')}-${randomUUID().slice(0, 8)}`;
@@ -153,7 +154,8 @@ export async function attempt({ builder, prompt, commands, cwd, dir, minutes, on
   if (worker.exitCode !== 0 || worker.timedOut || worker.error) {
     const said = `${worker.stderr}\n${worker.stdout.slice(-8192)}`;
     const limited = !worker.timedOut && !blocked && providerLimit.test(`${worker.stderr.slice(-2048)}\n${worker.stdout.slice(-500)}`);
-    return { ...result, status: blocked && !worker.idleTimedOut ? 'blocked' : 'failed', limited, note: worker.idleTimedOut ? worker.reason : blocked ?? worker.error ?? worker.reason ?? `executor exit ${worker.exitCode}`, evidence: said.slice(-6000) };
+    const rejected = !worker.timedOut && !blocked ? modelRejectedNote(builder, `${worker.stderr.slice(-2048)}\n${worker.stdout.slice(-500)}`) : '';
+    return { ...result, status: blocked && !worker.idleTimedOut ? 'blocked' : 'failed', limited, note: worker.idleTimedOut ? worker.reason : blocked ?? (rejected || worker.error) ?? worker.reason ?? `executor exit ${worker.exitCode}`, evidence: said.slice(-6000) };
   }
   if (blocked) return { ...result, status: 'blocked', note: blocked };
   if (!commands.length) return { ...result, status: 'unverified', note: 'no Accept commands' };
@@ -195,7 +197,7 @@ export async function runCard(args, root, cwd = process.cwd()) {
     const id = newId(), dir = join(cwd, '.ff/runs', id), startedAt = new Date().toISOString();
     temp = await openRunTemp({ id, cwd, config });
     const title = card.split(/\r?\n/).find(line => line.startsWith('# '))?.slice(2) ?? file;
-    const save = fields => atomicWrite(join(dir, 'run.json'), JSON.stringify({ id, kind: 'card', pid: process.pid, startedAt, ...fields }));
+    const save = fields => atomicWrite(join(dir, 'run.json'), JSON.stringify({ id, kind: 'card', pid: process.pid, startedAt, ...(builder.model ? { model: builder.model } : {}), ...fields }));
     save({ status: 'running', current: title });
     const result = await attempt({ builder, prompt: workerPrompt(card, builder, root, cwd, config), commands: acceptanceCommands(card), cwd, dir, minutes, onPid: pid => save({ status: 'running', current: title, executorPid: pid }) });
     keepTemp = Boolean(result.treeUnconfirmed);

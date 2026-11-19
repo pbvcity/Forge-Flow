@@ -385,7 +385,7 @@ async function carryTask(run, task) {
   };
   for (let number = 1; number <= maxAttempts; number++) {
     const builder = resolveBuilder(run.config, executor);
-    run.tasks[task.id] = { executor, attempts: number, ladder, ...(laneIntegration ? { laneIntegration } : {}) };
+    run.tasks[task.id] = { executor, ...(builder.model ? { model: builder.model } : {}), attempts: number, ladder, ...(laneIntegration ? { laneIntegration } : {}) };
     run.current = `${task.id} ${task.title} (attempt ${number})`;
     run.currentSince = new Date().toISOString();
     save(run);
@@ -393,7 +393,7 @@ async function carryTask(run, task) {
     const prompt = workerPrompt(taskCard(run, plan, task, evidence), builder, run.root, run.cwd, run.config);
     const before = snapshotPlan(run);
     last = await attempt({ builder, prompt, commands: task.accept, cwd: run.cwd, dir, minutes: run.minutes, onPid: pid => { run.executorPid = pid; save(run); } });
-    atomicWrite(join(dir, 'executor.txt'), `${executor}
+    atomicWrite(join(dir, 'executor.txt'), `${executor}${builder.model ? ` (${builder.model})` : ''}
 `);
     guardPlan(run, before, `During ${task.id}, the worker`);
     if (last.treeUnconfirmed) {
@@ -709,7 +709,7 @@ export async function runAll(args, root, cwd = process.cwd()) {
   }
   const builder = resolveBuilder(config);
   if (!builder.cmd) {
-    console.error(`${builder.note}\nUnattended runs need a headless builder: set roles.builder to claude, codex, or pi:<vendor>/<model>:<effort> in ~/.ff/config.json. Or work through the plan in this session.`);
+    console.error(`${builder.note}\nUnattended runs need a headless builder: set roles.builder to claude, codex, codex:<family>, or pi:<vendor>/<model>:<effort> in ~/.ff/config.json. Or work through the plan in this session.`);
     return 1;
   }
   if (!options.foreground) return detach(args, cwd, newId());

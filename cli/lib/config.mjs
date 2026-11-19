@@ -3,6 +3,8 @@ import { homedir } from 'node:os';
 import { relative, join } from 'node:path';
 
 import { tempDir } from './paths.mjs';
+import { resolveCodexModel } from './codexmodels.mjs';
+import { commandTemplate } from './proc.mjs';
 
 export const builtInExecutors = {
   claude: { cmd: 'claude -p --permission-mode acceptEdits --allowedTools Read,Edit,Write,Bash', profile: 'claude' },
@@ -67,6 +69,18 @@ export function resolveBuilder(config, role = config.roles.builder) {
   if (typeof role === 'string' && role.startsWith('pi:')) {
     const match = role.match(/^pi:([^/]+)\/(.+):([^:]+)$/);
     if (match) return { cmd: ['pi', '--print', '--no-session', '--provider', match[1], '--model', match[2], '--thinking', match[3]], profile: /gpt|codex|o[134]-/i.test(match[2]) ? 'gpt' : /claude/i.test(match[2]) ? 'claude' : 'generic' };
+  }
+  if (typeof role === 'string' && role.startsWith('codex:')) {
+    const base = config.executors.codex;
+    if (!base?.cmd) return { note: `No executor configured for builder codex` };
+    const resolved = resolveCodexModel(role.slice(6).trim());
+    if (resolved.error) return { note: resolved.error };
+    if (!/^[\w.-]+$/.test(resolved.slug)) return { note: `${role}: unusable model name ${JSON.stringify(resolved.slug)}` };
+    // The role's model replaces any model the executor command sets.
+    const template = Array.isArray(base.cmd) ? { command: base.cmd[0], args: base.cmd.slice(1) } : commandTemplate(base.cmd);
+    const args = template.args.filter((arg, index) => !['-m', '--model'].includes(arg) && !['-m', '--model'].includes(template.args[index - 1]) && !arg.startsWith('--model='));
+    const cmd = [template.command, ...args, '-m', resolved.slug];
+    return { ...base, cmd, model: resolved.slug, ...(resolved.family ? { family: resolved.family } : {}) };
   }
   return config.executors[role] ?? { note: `No executor configured for builder ${String(role)}` };
 }

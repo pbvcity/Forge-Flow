@@ -10,6 +10,7 @@ import { notifyChannels, notifySettings } from './notify.mjs';
 import { protectionState } from './protect.mjs';
 import { initState } from './init.mjs';
 import { agentsStatus, autoSyncAgents } from './agents.mjs';
+import { familyReport, seenFile } from './codexmodels.mjs';
 
 export function modelFamily(model, vendor) {
   if (/gpt|codex|^o[134](?:-|$)/i.test(model)) return 'openai';
@@ -38,6 +39,20 @@ export function sessionTiers(home = homedir()) {
   const claude = count(join(home, '.claude', 'agents'), '.md', /^(?:model|effort):\s*\S/m);
   const codex = count(join(home, '.codex', 'agents'), '.toml', /^(?:model|model_reasoning_effort)\s*=/m);
   return claude || codex ? `Claude Code ${claude}, Codex ${codex}` : 'none (setup can add three)';
+}
+
+// What each `codex:<family>` role resolves to, and any model cache an older Codex client left behind.
+export function codexModelLines(options) {
+  const rows = familyReport(options);
+  if (!rows.length) return [];
+  const lines = [`Codex models: ${rows.map(row => `${row.family} → ${row.slug}`).join(', ')}`];
+  const behind = new Map();
+  for (const row of rows) for (const cache of row.behind) {
+    if (!behind.has(cache.file)) behind.set(cache.file, { client: cache.client, items: [] });
+    behind.get(cache.file).items.push(`${row.family} ${cache.best}`);
+  }
+  for (const [file, { client, items }] of behind) lines.push(`  ${file}${client ? ` (written by Codex ${client})` : ''} lists only ${items.join(', ')}; ff keeps the newer models from ${seenFile(options?.home)}`);
+  return lines;
 }
 
 export function loginEvidence(name, env = process.env, home = homedir(), platform = process.platform) {
@@ -111,12 +126,13 @@ export async function doctor(cwd = process.cwd()) {
   }
   const layout = await initState(cwd, config);
   console.log(`Files and folders: ${layout.hasBlock ? 'present' : 'missing'} (${layout.rules})`);
-  console.log(`Notifications rule: ${layout.hasNotify ? 'present' : 'missing'} (${layout.rules})`);
+  console.log(`Notifications rule: ${layout.notifyOutdated ? 'outdated' : layout.hasNotify ? 'present' : 'missing'} (${layout.rules})`);
   console.log(`Temp folder: ${layout.temp}/ (${layout.tempIgnored ? 'ignored' : 'not ignored'})`);
   console.log(`Model families: ${families.size} (inferred from CLI/model names; availability is not authentication)`);
   await updateStatus(cwd, config);
   console.log(`Session tiers: ${sessionTiers()}`);
   console.log(`Codex agents: ${agentsStatus()}`);
+  for (const line of codexModelLines()) console.log(line);
   console.log(`Notifications: ${notifyChannels(notifySettings()).join(', ') || 'off'}`);
   console.log(`Branch protection: ${await protectionState(cwd)}`);
   const builder = resolveBuilder(config);

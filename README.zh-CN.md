@@ -46,7 +46,7 @@ pi install git:github.com/pbvcity/Forge-Flow
 
 无人值守计划可设置 `roles.fallback`，它只在额度受限后接手；失败的尝试先经诊断，再由同一执行器重试。任务可用 `Executor:` 指定执行器，报告会注明实际使用者。详见 [CLI 配置](cli/README.md#whole-plans)。
 
-OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角色。`doctor` 会列出可用模型，提示词文件和评审权限的说明见 [setup](skills/setup/SKILL.md)。从桌面图标或编辑器启动的宿主 PATH 往往不全，ff 会在已有 PATH 之后再查找 npm、nvm、Volta、`~/.local/bin` 等常见安装目录。设 `FF_EXTRA_PATH=0` 可只用原有 PATH。
+Codex 角色可以只写模型家族，例如 `codex:sol`，总是用 Codex 列出的该家族最新一版；写完整名字如 `codex:gpt-6.2-sol` 则固定版本。OpenCode 的执行者和只读评审者使用 `opencode:<provider>/<model>` 角色。`doctor` 会列出可用模型，提示词文件和评审权限的说明见 [setup](skills/setup/SKILL.md)。从桌面图标或编辑器启动的宿主 PATH 往往不全，ff 会在已有 PATH 之后再查找 npm、nvm、Volta、`~/.local/bin` 等常见安装目录。设 `FF_EXTRA_PATH=0` 可只用原有 PATH。
 
 | Claude Code | Codex | Pi | 作用 |
 |---|---|---|---|
@@ -98,7 +98,7 @@ FF_NOTIFY_LANG=zh
 
 两个渠道可以只配一个。`ff notify --test` 发送测试消息。
 
-通知会注明机器名。一轮结束本身不发通知，由 AI 判断：你交代的事做完了，它在最终回复末尾写 `<!-- ff-done -->`；需要你回应时写 `<!-- ff-await -->`；汇报进度时都不写。工作中途要找你（比如心跳时），它运行 `ff notify send "<内容>"`，需要你回答时加 `--await`。如果运行的主控进程意外退出，下次在该项目启动会话时会报告。每次发送尝试都会记入 `~/.ff/notify-log.jsonl`，只保留最近 200 次，不记录消息正文或秘密信息。
+通知会注明机器名。一轮结束本身不发通知，由 AI 判断：你交代的事做完了，它在最终回复末尾写 `<!-- ff-done -->`；需要你回应时写 `<!-- ff-await -->`；汇报进度时都不写。心跳或后台任务唤醒的回合不算新请求，每个标记只写一次，写过 `<!-- ff-await -->` 后在你回复前不再重复。工作中途要找你（比如心跳时），它运行 `ff notify send "<内容>"`，需要你回答时加 `--await`，并且只在上次通知后有新变化时才发。如果运行的主控进程意外退出，下次在该项目启动会话时会报告。每次发送尝试都会记入 `~/.ff/notify-log.jsonl`，只保留最近 200 次，不记录消息正文或秘密信息。
 
 | 时机 | Claude Code | Codex | Pi |
 |---|---|---|---|

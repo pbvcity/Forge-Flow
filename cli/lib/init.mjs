@@ -1,4 +1,4 @@
-import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { readConfig } from './config.mjs';
 import { excludeGitEntries, git } from './git.mjs';
@@ -21,15 +21,22 @@ export async function initState(cwd, config) {
   const hasBlock = headings.includes('## Files and folders');
   const hasNotify = headings.includes('## Notifications');
   const ignored = await git(cwd, ['check-ignore', '-q', `${temp}/x`]);
-  return { planning, temp, worktrees, rules, text, hasBlock, hasNotify, tempIgnored: ignored.exitCode === 0 };
+  return { planning, temp, worktrees, rules, text, hasBlock, hasNotify, notifyOutdated: hasNotify && Boolean(olderNotify(text)), tempIgnored: ignored.exitCode === 0 };
 }
 
 // Project rules are read in every session, so the notice rule reaches sessions that never load the go skill.
 const notifyBlock = `## Notifications
 
+- A turn ending sends nothing; you decide. End the final reply with \`<!-- ff-done -->\` when the work the user asked for is finished, or \`<!-- ff-await -->\` when you stop and need the user. Write neither on progress reports, while background work runs, or before more tool calls. A turn woken by a heartbeat, a scheduled wakeup, or a background-task notice is not a new request: if it only reports progress, write no marker. Write each marker once; after \`<!-- ff-await -->\`, do not write it again until the user replies.
+- To reach the user mid-work, for example when a module or phase finishes or from a heartbeat, run \`ff notify send "<text>"\`, with \`--await\` when they must answer. Say what happened and what they should do. From a heartbeat, send only when something changed since your last notice.
+`;
+// Earlier Notifications sections ff wrote; an unedited one is replaced by the current text.
+const olderNotifyBlocks = [`## Notifications
+
 - A turn ending sends nothing; you decide. End the final reply with \`<!-- ff-done -->\` when the work the user asked for is finished, or \`<!-- ff-await -->\` when you stop and need the user. Write neither on progress reports, while background work runs, or before more tool calls.
 - To reach the user mid-work, for example when a module or phase finishes or from a heartbeat, run \`ff notify send "<text>"\`, with \`--await\` when they must answer. Say what happened and what they should do.
-`;
+`];
+const olderNotify = text => olderNotifyBlocks.find(block => text.replaceAll('\r\n', '\n').includes(block));
 
 function rulesBlock({ planning, temp, worktrees }) {
   return `## Files and folders
@@ -49,7 +56,7 @@ export async function init(args = [], cwd = process.cwd()) {
   const apply = args.includes('--apply');
   const { config } = readConfig(cwd);
   const state = await initState(cwd, config);
-  const { planning, temp, worktrees, rules, hasBlock, hasNotify, tempIgnored } = state;
+  const { planning, temp, worktrees, rules, hasBlock, hasNotify, notifyOutdated, tempIgnored } = state;
   console.log(`Planning: ${planning}/\nTemp: ${temp}/\nWorktrees: ${worktrees}/`);
   let changed = 0;
   for (const dir of ['docs', planning, temp, ...['scripts', 'logs', 'scratch', 'snapshots', 'backups', 'worktree-archive'].map(name => join(temp, name))]) {
@@ -69,6 +76,16 @@ export async function init(args = [], cwd = process.cwd()) {
   console.log(`${apply ? 'Ensuring' : 'Would ensure'} runtime entries in common git info/exclude: ${runExcludes.join(', ')}`);
   if (apply) await excludeGitEntries(cwd, runExcludes);
   for (const [name, present, block] of [['Files and folders', hasBlock, rulesBlock(state)], ['Notifications', hasNotify, notifyBlock]]) {
+    if (present && name === 'Notifications' && notifyOutdated) {
+      if (apply) {
+        const text = readOptional(join(cwd, rules)), crlf = text.includes('\r\n');
+        const updated = text.replaceAll('\r\n', '\n').replace(olderNotify(text), () => notifyBlock);
+        writeFileSync(join(cwd, rules), crlf ? updated.replaceAll('\n', '\r\n') : updated, 'utf8');
+      }
+      console.log(`${apply ? 'Updated' : 'Would update'} ${name} in ${rules} to the current text`);
+      changed++;
+      continue;
+    }
     if (present) { console.log(`${rules}: ${name} already present; unchanged`); continue; }
     if (apply) {
       const text = readOptional(join(cwd, rules));
