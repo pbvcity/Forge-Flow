@@ -6,11 +6,12 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
-export const RULES_VERSION = 2;
+export const RULES_VERSION = 3;
 // What changed in each version, for an agent aligning a file written at an older one. Each change names the
 // files it applies to: project rules (init's sections) or user rules (setup's Delegation section).
 export const RULES_CHANGES = {
   2: { scope: 'project', text: 'Notifications: a turn woken by a heartbeat, a scheduled wakeup, or a background-task notice is not a new request; if it only reports progress, it writes no marker. Each marker is written once: after `<!-- ff-await -->`, do not write it again until the user replies. From a heartbeat, run `ff notify send` only when something changed since the last notice.' },
+  3: { scope: 'project', text: 'Notifications: Markers and notices are for a user who has stepped away. In a live exchange, a quick answer, or a small change the user is watching, write no marker and send nothing: they will read the reply. Write one when the turn ran long, or when it ends a long or multi-step task.' },
 };
 
 const markerPattern = /<!-- forge-flow rules (\d+) -->/;
