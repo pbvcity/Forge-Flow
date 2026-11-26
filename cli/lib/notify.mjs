@@ -53,7 +53,7 @@ export function redact(text) {
 export function noticeText({ event, project, detail }, lang = 'en') {
   const body = redact(detail).trim();
   const short = body.length > MAX_DETAIL ? `${body.slice(0, MAX_DETAIL)}…` : body;
-  return [`[Forge Flow] ${project} @ ${hostname().split('.')[0]}: ${LABELS[lang][event] ?? event}`, short].filter(Boolean).join('\n');
+  return [`${project} @ ${hostname().split('.')[0]}: ${LABELS[lang][event] ?? event}`, short].filter(Boolean).join('\n');
 }
 
 async function post(url, body, fetcher, timeoutMs) {
